@@ -1,0 +1,19 @@
+[Unit]
+Description=Kimi Telegram Bridge
+Documentation=https://github.com/.../telegram-bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__HOME__/.kimi/plugins/telegram-bridge
+ExecStart=__VENV_PYTHON__ -m src.daemon
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Restart=on-failure
+RestartSec=5s
+StandardOutput=append:__HOME__/.kimi/bridge/logs/bridge.log
+StandardError=append:__HOME__/.kimi/bridge/logs/bridge.log
+
+[Install]
+WantedBy=default.target
