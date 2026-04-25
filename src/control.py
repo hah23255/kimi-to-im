@@ -48,10 +48,8 @@ def _action_status() -> dict[str, Any]:
 
 
 def _action_logs(lines: int = 50) -> dict[str, Any]:
-    # Resolve LOG_FILE at call time so tests can monkeypatch the module attr.
-    log_file = sys.modules[__name__].LOG_FILE
-    if log_file.exists():
-        text = log_file.read_text(errors="replace").splitlines()
+    if LOG_FILE.exists():
+        text = LOG_FILE.read_text(errors="replace").splitlines()
         return {"ok": True, "output": "\n".join(text[-lines:])}
     res = subprocess.run(
         ["journalctl", "--user", "-u", SERVICE, "-n", str(lines), "--no-pager"],
@@ -81,13 +79,16 @@ def _action_setup() -> dict[str, Any]:
     except Exception as err:
         return {"ok": False, "output": "\n".join([*report, f"✗ config error: {err}"])}
 
-    kimi = subprocess.run(
-        ["kimi", "--version"], capture_output=True, text=True, check=False
-    )
-    if kimi.returncode == 0:
-        report.append(f"✓ kimi CLI found: {kimi.stdout.strip()}")
-    else:
-        report.append(f"✗ kimi --version failed: {kimi.stderr.strip()}")
+    try:
+        kimi = subprocess.run(
+            ["kimi", "--version"], capture_output=True, text=True, check=False
+        )
+        if kimi.returncode == 0:
+            report.append(f"✓ kimi CLI found: {kimi.stdout.strip()}")
+        else:
+            report.append(f"✗ kimi --version failed: {kimi.stderr.strip()}")
+    except FileNotFoundError:
+        report.append("✗ kimi CLI not found on PATH — is it installed?")
 
     try:
         import httpx

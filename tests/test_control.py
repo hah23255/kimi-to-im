@@ -24,7 +24,7 @@ def test_start_invokes_systemctl_start(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = _run_handle("start")
     assert result["ok"] is True
-    assert any("start" in c and "kimi-telegram-bridge.service" in c for c in calls)
+    assert calls == [["systemctl", "--user", "start", "kimi-telegram-bridge.service"]]
 
 
 def test_stop_invokes_systemctl_stop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,7 +37,7 @@ def test_stop_invokes_systemctl_stop(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", fake_run)
     result = _run_handle("stop")
     assert result["ok"] is True
-    assert any("stop" in c and "kimi-telegram-bridge.service" in c for c in calls)
+    assert calls == [["systemctl", "--user", "stop", "kimi-telegram-bridge.service"]]
 
 
 def test_status_returns_systemctl_output(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -82,3 +82,45 @@ def test_unknown_action_returns_error() -> None:
     result = _run_handle("nuke")
     assert result["ok"] is False
     assert "unknown action" in result["output"].lower()
+
+
+def test_setup_reports_missing_kimi_binary(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When `kimi` is not on PATH, setup reports it gracefully (no crash)."""
+    import src.control as control_mod
+
+    plugin_dir = Path(control_mod.__file__).resolve().parent.parent
+    real_cfg = plugin_dir / "config.json"
+    cleanup_needed = not real_cfg.exists()
+    if cleanup_needed:
+        real_cfg.write_text(
+            '{"telegram": {"bot_token": "12345:abc", "allowed_user_ids": [42]}}'
+        )
+    try:
+        # Patch subprocess.run: kimi raises FileNotFoundError; everything else delegates.
+        original = subprocess.run
+
+        def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess:
+            if isinstance(cmd, list) and cmd and cmd[0] == "kimi":
+                raise FileNotFoundError("[Errno 2] No such file: 'kimi'")
+            return original(cmd, **kw)
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+        # Patch httpx.get to avoid hitting the network
+        import httpx
+
+        class _FakeResp:
+            def json(self) -> dict:
+                return {"ok": True, "result": {"username": "test_bot"}}
+
+        monkeypatch.setattr(httpx, "get", lambda *a, **kw: _FakeResp())
+
+        result = control_mod.handle({"action": "setup"})
+        assert "kimi CLI not found on PATH" in result["output"]
+        # ok should be False because at least one ✗ line is present
+        assert result["ok"] is False
+    finally:
+        if cleanup_needed and real_cfg.exists():
+            real_cfg.unlink()
