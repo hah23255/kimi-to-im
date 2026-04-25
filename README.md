@@ -16,6 +16,8 @@ $EDITOR config.json   # set telegram.bot_token and telegram.allowed_user_ids
 systemctl --user start kimi-telegram-bridge.service
 ```
 
+`install.sh` must be run from inside the plugin directory; the leading `cd` is required.
+
 ## Usage from inside Kimi
 
 ```sh
@@ -39,6 +41,12 @@ Edit `config.json`. The minimum:
 
 `config.json` is gitignored — never commit your bot token.
 
+After editing `config.json`, restrict its permissions so other users on the same machine can't read your bot token:
+
+```sh
+chmod 600 config.json
+```
+
 ## Operating
 
 - **Start**: `systemctl --user start kimi-telegram-bridge.service`
@@ -47,6 +55,34 @@ Edit `config.json`. The minimum:
 - **Logs**: `tail -f ~/.kimi/bridge/logs/bridge.log` (or `journalctl --user -u kimi-telegram-bridge.service -f`)
 
 The daemon keeps a `chat_id → kimi session_id` map at `~/.kimi/bridge/state.json` so each Telegram chat resumes the same Kimi session across messages.
+
+### Log rotation
+
+`bridge.log` is appended to indefinitely. For long-running deployments add a logrotate rule, e.g. at `/etc/logrotate.d/kimi-telegram-bridge`:
+
+```
+/home/YOUR_USER/.kimi/bridge/logs/bridge.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+```
+
+Or rely on `journalctl --user -u kimi-telegram-bridge.service` (which has built-in rotation) and skip the file output by editing the systemd unit to drop the `StandardOutput=append:` and `StandardError=append:` lines.
+
+## Uninstall
+
+```sh
+systemctl --user disable --now kimi-telegram-bridge.service
+rm -f ~/.config/systemd/user/kimi-telegram-bridge.service
+systemctl --user daemon-reload
+rm -rf ~/.kimi/plugins/telegram-bridge ~/.kimi/bridge
+```
+
+The first three commands stop and unregister the service. The last removes the plugin code, your config, and runtime state (sessions, state.json, logs).
 
 ## Development
 
