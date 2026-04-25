@@ -126,6 +126,14 @@ def handle(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> None:  # pragma: no cover — IO wiring only
+    # Defense-in-depth: if anyone ever sets the root logger to INFO before
+    # calling main(), httpx would log the full Telegram URL (which embeds the
+    # bot token) on every request inside _action_setup's getMe call.
+    import logging
+
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}
