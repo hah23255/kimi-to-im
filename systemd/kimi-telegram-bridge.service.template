@@ -9,6 +9,23 @@ Environment=PYTHONUNBUFFERED=1
 Environment=PATH=__HOME__/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Restart=on-failure
 RestartSec=5s
+
+# --- Hardening (audit F-2) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
 StandardOutput=append:__HOME__/.kimi/bridge/logs/bridge.log
 StandardError=append:__HOME__/.kimi/bridge/logs/bridge.log
 
