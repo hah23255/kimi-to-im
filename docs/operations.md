@@ -457,6 +457,52 @@ git ls-files | grep -E '^config\.json$'
 
 ---
 
+## Hardening notes (audit-derived)
+
+### File permissions
+
+After install, verify the runtime data dir is locked down:
+
+```sh
+chmod 700 ~/.kimi/bridge ~/.kimi/bridge/logs ~/.kimi/bridge/runtime
+chmod 600 ~/.kimi/bridge/state.json ~/.kimi/bridge/logs/bridge.log 2>/dev/null
+chmod -R go-rwx ~/.kimi/sessions/   # kimi conversation history, not bridge state
+```
+
+The systemd unit installs with `UMask=0077` so newly-created files inherit 0600.
+
+### Lock the bot to a single chat
+
+`config.json` accepts `allowed_chat_ids`. Setting it to your DM's chat_id (equal to your user_id for private chats) prevents the bot from responding inside any group it's added to. Recommended even with Telegram's default privacy mode.
+
+```json
+{
+  "telegram": {
+    "allowed_user_ids": [123456789],
+    "allowed_chat_ids": [123456789]
+  }
+}
+```
+
+### Token hygiene
+
+The Telegram bot token lives in `config.json` (mode 0600, gitignored). It is also held in memory by the running daemon. To rotate:
+
+```sh
+# In Telegram, message @BotFather → /token → choose your bot → /revoke (kills old token)
+# BotFather replies with a new token; paste into config.json
+$EDITOR ~/.kimi/plugins/telegram-bridge/config.json
+systemctl --user restart kimi-telegram-bridge.service
+```
+
+If the previous token leaked (e.g., into a backup), `/revoke` makes it inert immediately.
+
+### Backups
+
+If you back up `~/.kimi/`, your `bridge/logs/bridge.log` and `config.json` go with it. Either exclude them from the backup, or encrypt the backup at rest.
+
+---
+
 ## Architecture refresher
 
 Two layers:
