@@ -5,6 +5,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
@@ -97,6 +98,7 @@ async def run(
                 sid = _session_for(state, msg.chat_id)
                 save_state(state_path, state)  # persist new session id before running
 
+                turn_start = time.perf_counter()
                 result = await run_kimi_func(
                     prompt=msg.text,
                     session_id=sid,
@@ -105,6 +107,15 @@ async def run(
                     agent=cfg.kimi.agent,
                     kimi_path=kimi_path,
                     timeout=KIMI_TIMEOUT_S,
+                )
+                elapsed_ms = int((time.perf_counter() - turn_start) * 1000)
+                LOG.info(
+                    "turn chat=%d session=%s exit=%d ms=%d reply_len=%d",
+                    msg.chat_id,
+                    sid[:8],
+                    result.exit_code,
+                    elapsed_ms,
+                    len(result.text or ""),
                 )
 
                 if result.exit_code != 0:

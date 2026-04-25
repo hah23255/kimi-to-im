@@ -183,3 +183,37 @@ async def test_run_reuses_session_id_across_messages_in_same_chat(tmp_path: Path
     )
     assert len(seen_sessions) == 2
     assert seen_sessions[0] == seen_sessions[1]
+
+
+async def test_run_logs_one_line_per_turn(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Each completed kimi turn should produce a single INFO log entry."""
+    import logging
+
+    tg = _FakeTelegram(
+        updates_to_serve=[[_msg("ping", update_id=500)]],
+        sent_messages=[],
+        chat_actions=[],
+    )
+    stop = asyncio.Event()
+    asyncio.get_running_loop().call_later(0.2, stop.set)
+
+    with caplog.at_level(logging.INFO, logger="kimi_telegram_bridge"):
+        await run(
+            cfg=_cfg(),
+            state_path=tmp_path / "state.json",
+            tg=tg,
+            run_kimi_func=_run_kimi_stub,
+            kimi_path="/usr/bin/true",
+            stop_event=stop,
+        )
+
+    turn_lines = [r for r in caplog.records if r.message.startswith("turn ")]
+    assert len(turn_lines) == 1
+    msg = turn_lines[0].message
+    assert "chat=10" in msg
+    assert "exit=0" in msg
+    assert "ms=" in msg
+    assert "reply_len=" in msg
+    assert "session=" in msg
