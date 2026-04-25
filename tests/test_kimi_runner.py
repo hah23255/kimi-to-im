@@ -12,53 +12,74 @@ from src.kimi_runner import KimiResult, parse_stream_json, run_kimi
 
 # --- parser ----------------------------------------------------------
 
-def test_parse_extracts_assistant_text() -> None:
+def test_parse_extracts_assistant_text_from_string_content() -> None:
+    """Real kimi --no-thinking shape: content is a plain string."""
+    stream = '{"role":"assistant","content":"Hello world"}\n'
+    assert parse_stream_json(stream) == "Hello world"
+
+
+def test_parse_extracts_assistant_text_from_list_content() -> None:
+    """Real kimi (default thinking on) shape: content is a list of parts."""
     stream = (
-        '{"type": "assistant", "content": [{"type": "text", "text": "Hello "}]}\n'
-        '{"type": "assistant", "content": [{"type": "text", "text": "world"}]}\n'
+        '{"role":"assistant","content":['
+        '{"type":"text","text":"Hello "},'
+        '{"type":"text","text":"world"}'
+        ']}\n'
     )
     assert parse_stream_json(stream) == "Hello world"
 
 
 def test_parse_ignores_think_blocks() -> None:
+    """Think parts use the `think` key (not `text`); they are not the reply."""
     stream = (
-        '{"type": "assistant", "content": [{"type": "think", "text": "hmm"}]}\n'
-        '{"type": "assistant", "content": [{"type": "text", "text": "hi"}]}\n'
+        '{"role":"assistant","content":['
+        '{"type":"think","think":"hmm","encrypted":null},'
+        '{"type":"text","text":"hi"}'
+        ']}\n'
     )
     assert parse_stream_json(stream) == "hi"
 
 
-def test_parse_ignores_unknown_event_types() -> None:
+def test_parse_ignores_resume_session_trailer() -> None:
+    """Real kimi appends a non-JSON line: `To resume this session: kimi -r ...`."""
     stream = (
-        '{"type": "turn_begin"}\n'
-        '{"type": "step_begin", "id": 1}\n'
-        '{"type": "assistant", "content": [{"type": "text", "text": "ok"}]}\n'
-        '{"type": "turn_end"}\n'
+        '{"role":"assistant","content":"reply"}\n'
+        '\n'
+        'To resume this session: kimi -r abc-123\n'
     )
-    assert parse_stream_json(stream) == "ok"
+    assert parse_stream_json(stream) == "reply"
+
+
+def test_parse_ignores_non_assistant_role() -> None:
+    """Other roles (user, system, tool) and untyped events are skipped."""
+    stream = (
+        '{"role":"user","content":"hi"}\n'
+        '{"role":"system","content":"sys"}\n'
+        '{"role":"assistant","content":"the reply"}\n'
+    )
+    assert parse_stream_json(stream) == "the reply"
 
 
 def test_parse_skips_blank_lines_and_invalid_json() -> None:
     stream = (
         "\n"
         "not-json-junk\n"
-        '{"type": "assistant", "content": [{"type": "text", "text": "hi"}]}\n'
+        '{"role":"assistant","content":"hi"}\n'
     )
     assert parse_stream_json(stream) == "hi"
 
 
-def test_parse_handles_assistant_with_multiple_text_parts() -> None:
-    stream = (
-        '{"type": "assistant", "content": ['
-        '{"type": "text", "text": "part one. "},'
-        '{"type": "text", "text": "part two."}'
-        ']}\n'
-    )
-    assert parse_stream_json(stream) == "part one. part two."
-
-
 def test_parse_empty_stream_returns_empty_string() -> None:
     assert parse_stream_json("") == ""
+
+
+def test_parse_handles_mixed_string_and_list_events_in_one_stream() -> None:
+    """Multiple events back-to-back; each may be either shape."""
+    stream = (
+        '{"role":"assistant","content":"first"}\n'
+        '{"role":"assistant","content":[{"type":"text","text":" then second"}]}\n'
+    )
+    assert parse_stream_json(stream) == "first then second"
 
 
 # --- run_kimi (integration with a fake kimi binary) ------------------
@@ -74,7 +95,7 @@ def fake_kimi(tmp_path: Path) -> Path:
             # Read prompt from stdin to mimic real kimi --print behaviour.
             cat > /dev/null
             cat <<'EOF'
-            {"type": "assistant", "content": [{"type": "text", "text": "fake reply"}]}
+            {"role":"assistant","content":"fake reply"}
             EOF
             """
         )
@@ -127,7 +148,7 @@ async def test_run_kimi_passes_session_and_workdir_args(tmp_path: Path) -> None:
             cat > /dev/null
             printf '%s\\n' "$@" > "{captured}"
             cat <<'EOF'
-            {{"type": "assistant", "content": [{{"type": "text", "text": "ok"}}]}}
+            {{"role":"assistant","content":"ok"}}
             EOF
             """
         )
@@ -176,7 +197,7 @@ async def test_run_kimi_no_timeout_by_default(tmp_path: Path) -> None:
     """Without a timeout, a quick kimi invocation completes normally."""
     script = tmp_path / "kimi-quick"
     script.write_text(
-        '#!/bin/sh\ncat > /dev/null\necho \'{"type": "assistant", "content": [{"type": "text", "text": "ok"}]}\'\n'
+        '#!/bin/sh\ncat > /dev/null\necho \'{"role":"assistant","content":"ok"}\'\n'
     )
     script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 

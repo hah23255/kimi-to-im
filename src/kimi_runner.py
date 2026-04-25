@@ -17,8 +17,12 @@ class KimiResult:
 def parse_stream_json(stdout: str) -> str:
     """Accumulate assistant text from kimi's newline-delimited JSON stream.
 
+    Handles two real-kimi shapes:
+      {"role":"assistant","content":"plain text"}   (when --no-thinking)
+      {"role":"assistant","content":[{"type":"text","text":"..."}, ...]}
+
     Quietly ignores blank lines, malformed JSON, non-assistant events,
-    and `think` content blocks (which are model thinking, not the reply).
+    `think` content parts, and the trailing "To resume this session: ..." line.
     """
     chunks: list[str] = []
     for line in stdout.splitlines():
@@ -29,13 +33,17 @@ def parse_stream_json(stdout: str) -> str:
             event = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if not isinstance(event, dict) or event.get("type") != "assistant":
+        if not isinstance(event, dict) or event.get("role") != "assistant":
             continue
-        for part in event.get("content") or []:
-            if isinstance(part, dict) and part.get("type") == "text":
-                text = part.get("text")
-                if isinstance(text, str):
-                    chunks.append(text)
+        content = event.get("content")
+        if isinstance(content, str):
+            chunks.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    text = part.get("text")
+                    if isinstance(text, str):
+                        chunks.append(text)
     return "".join(chunks)
 
 
