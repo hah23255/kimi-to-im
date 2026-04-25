@@ -39,14 +39,31 @@ def parse_stream_json(stdout: str) -> str:
     return "".join(chunks)
 
 
-def _run_sync(args: list[str], prompt: str) -> KimiResult:
+def _run_sync(
+    args: list[str],
+    prompt: str,
+    timeout: float | None = None,
+) -> KimiResult:
     """Synchronous worker for subprocess invocation. Called via asyncio.to_thread."""
-    completed = subprocess.run(
-        args,
-        input=prompt.encode(),
-        capture_output=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            args,
+            input=prompt.encode(),
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial_stderr = ""
+        if exc.stderr is not None:
+            partial_stderr = (
+                exc.stderr.decode("utf-8", errors="replace")
+                if isinstance(exc.stderr, (bytes, bytearray))
+                else str(exc.stderr)
+            )
+        message = f"kimi timed out after {timeout}s"
+        stderr = f"{partial_stderr}\n{message}".strip() if partial_stderr else message
+        return KimiResult(text="", exit_code=124, stderr=stderr)
     return KimiResult(
         text=parse_stream_json(completed.stdout.decode("utf-8", errors="replace")),
         exit_code=completed.returncode,
@@ -62,6 +79,7 @@ async def run_kimi(
     model: str,
     agent: str,
     kimi_path: str,
+    timeout: float | None = None,
 ) -> KimiResult:
     """Run the kimi CLI in --print stream-json mode. Returns when the turn ends."""
     args: list[str] = [
@@ -78,4 +96,4 @@ async def run_kimi(
     ]
     if model:
         args.extend(["--model", model])
-    return await asyncio.to_thread(_run_sync, args, prompt)
+    return await asyncio.to_thread(_run_sync, args, prompt, timeout)

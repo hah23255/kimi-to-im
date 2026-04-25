@@ -83,9 +83,6 @@ def fake_kimi(tmp_path: Path) -> Path:
     return script
 
 
-pytestmark = pytest.mark.asyncio
-
-
 async def test_run_kimi_returns_assistant_text(fake_kimi: Path, tmp_path: Path) -> None:
     result = await run_kimi(
         prompt="hello",
@@ -153,3 +150,43 @@ async def test_run_kimi_passes_session_and_workdir_args(tmp_path: Path) -> None:
     assert "--work-dir" in args and "/tmp/work" in args
     assert "--model" in args and "kimi-code/kimi-for-coding" in args
     assert "--agent" in args and "default" in args
+
+
+async def test_run_kimi_returns_synthetic_timeout_result(tmp_path: Path) -> None:
+    """A kimi process that exceeds the timeout returns exit_code 124."""
+    script = tmp_path / "kimi-hang"
+    script.write_text("#!/bin/sh\ncat > /dev/null\nsleep 5\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    result = await run_kimi(
+        prompt="x",
+        session_id="s",
+        workdir=str(tmp_path),
+        model="",
+        agent="default",
+        kimi_path=str(script),
+        timeout=0.5,
+    )
+    assert result.exit_code == 124
+    assert "timed out" in result.stderr
+    assert result.text == ""
+
+
+async def test_run_kimi_no_timeout_by_default(tmp_path: Path) -> None:
+    """Without a timeout, a quick kimi invocation completes normally."""
+    script = tmp_path / "kimi-quick"
+    script.write_text(
+        '#!/bin/sh\ncat > /dev/null\necho \'{"type": "assistant", "content": [{"type": "text", "text": "ok"}]}\'\n'
+    )
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    result = await run_kimi(
+        prompt="x",
+        session_id="s",
+        workdir=str(tmp_path),
+        model="",
+        agent="default",
+        kimi_path=str(script),
+    )
+    assert result.exit_code == 0
+    assert result.text == "ok"
