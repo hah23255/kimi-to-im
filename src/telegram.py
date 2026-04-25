@@ -73,3 +73,71 @@ def chunk_message(text: str, max_len: int = 4096) -> list[str]:
         else:
             remaining = remaining[cut:]
     return chunks
+
+
+# --- HTTP client -----------------------------------------------------
+import httpx
+
+
+class TelegramClient:
+    """Thin async wrapper around the Telegram bot HTTP API."""
+
+    def __init__(
+        self, bot_token: str, *, base_url: str = "https://api.telegram.org"
+    ) -> None:
+        self._base = f"{base_url}/bot{bot_token}"
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> "TelegramClient":
+        # 35s read timeout > 30s long-poll timeout to leave slack.
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(35.0))
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        assert self._client is not None
+        await self._client.aclose()
+        self._client = None
+
+    async def get_updates(
+        self, offset: int, timeout: int = 30
+    ) -> list[dict[str, Any]]:
+        assert self._client is not None
+        params = {
+            "offset": offset,
+            "timeout": timeout,
+            "allowed_updates": '["message"]',
+        }
+        r = await self._client.get(f"{self._base}/getUpdates", params=params)
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(
+                f"telegram getUpdates failed: {data.get('description', 'unknown error')}"
+            )
+        return list(data.get("result") or [])
+
+    async def send_message(self, chat_id: int, text: str) -> None:
+        assert self._client is not None
+        for chunk in chunk_message(text):
+            r = await self._client.post(
+                f"{self._base}/sendMessage",
+                json={"chat_id": chat_id, "text": chunk},
+            )
+            data = r.json()
+            if not data.get("ok"):
+                raise RuntimeError(
+                    f"telegram sendMessage failed: {data.get('description', 'unknown error')}"
+                )
+
+    async def send_chat_action(
+        self, chat_id: int, action: str = "typing"
+    ) -> None:
+        assert self._client is not None
+        r = await self._client.post(
+            f"{self._base}/sendChatAction",
+            json={"chat_id": chat_id, "action": action},
+        )
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(
+                f"telegram sendChatAction failed: {data.get('description', 'unknown error')}"
+            )
