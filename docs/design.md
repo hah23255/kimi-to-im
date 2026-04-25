@@ -5,19 +5,17 @@
 
 ## Context and motivation
 
-The user already runs the `claude-to-im` bridge: a daemon that connects Telegram (and other IMs) to the `claude` CLI so Claude can be chatted with from a phone. They want the same affordance for the Kimi CLI (`kimi`, MoonshotAI Kimi Coding, installed at `/home/i/.local/bin/kimi`, v1.39.0).
+This bridge connects the [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) (`kimi`, v1.39+) to Telegram so a Kimi session can be reached from a phone. The CLI already runs locally; the bridge just adds an inbound surface (a Telegram bot) and a per-chat session map so a Telegram conversation maps cleanly onto a `kimi -S <id>` session.
 
-The `claude-to-im` codebase is a Node.js daemon tied to Claude Code's runtime conventions. Per user direction, this new bridge must:
+Design constraints:
 
-1. Be **a separate codebase from `claude-to-im`** — no dependency on the `claude-to-im` npm package or Anthropic SDKs.
-2. Live within **Kimi's application structure** — under `~/.kimi/`, not under `~/.claude/`.
-3. Be **installed as a Kimi plugin/extension** (using Kimi's plugin model where it fits).
-
-Both bridges should be able to run side-by-side with separate bot tokens.
+1. **Standalone codebase** — no SDKs from other LLM vendors, no NPM dependencies, single Python runtime.
+2. **Lives within Kimi's application directory** at `~/.kimi/` rather than alongside other tools' plugins.
+3. **Installed as a Kimi plugin** under `~/.kimi/plugins/telegram-bridge/` so it shows up in Kimi's plugin tooling, even though the actual daemon runs as a sibling systemd service (see Architecture below).
 
 ## Constraint that shaped the design
 
-Investigation into Kimi's extensibility surface (`/home/i/.local/share/uv/tools/kimi-cli/lib/python3.13/site-packages/kimi_cli/`) produced a hard finding:
+Investigation into Kimi's extensibility surface (`~/.local/share/uv/tools/kimi-cli/lib/python3.13/site-packages/kimi_cli/`) produced a hard finding:
 
 - **Skills** (`~/.kimi/skills/`) — markdown injected into the system prompt; non-executable.
 - **Plugins** (`~/.kimi/plugins/<name>/plugin.json`) — synchronous tool wrappers, ~120s subprocess timeout, request/response only. Cannot host a long-running process.
@@ -131,7 +129,7 @@ Rationale for the split: `~/.kimi/plugins/telegram-bridge/` is code + configurat
     "allowed_chat_ids": []
   },
   "kimi": {
-    "default_workdir": "/home/i",
+    "default_workdir": "/home/YOUR_USER",
     "model": "",
     "agent": "default"
   }
@@ -152,7 +150,7 @@ The config file is read once at daemon start; SIGHUP triggers a re-read.
 - **httpx** (single runtime dep) for Telegram HTTP API.
 - `uv` for venv creation in `install.sh`.
 
-No Node, no npm packages, no `claude-to-im`, no Anthropic SDKs.
+No Node, no npm packages, no third-party LLM SDKs.
 
 ## Install flow
 
@@ -192,7 +190,7 @@ WantedBy=default.target
 - Inline permission buttons — Kimi's MCP tool calls do not surface in `--output-format stream-json`. Kimi runs its tools internally with whatever yolo policy the agent has; the bridge sees only the final assistant text.
 - Image / multimodal input — Kimi `--print` image handling is unverified; defer to v2.
 - Setup wizard with interactive token validation — replaced by edit-config-json + `install.sh`.
-- Plan/ask/code mode mapping — Kimi has its own agent system that is incompatible with claude-to-im's mode concept; out of scope.
+- Plan/ask/code mode mapping — Kimi has its own agent system; mapping to a separate mode concept is out of scope.
 - Cross-machine sync of `state.json` — single-host only.
 
 ## Verification path
@@ -206,8 +204,7 @@ End-to-end manual checks after implementation:
 5. Send a follow-up message from the same chat: confirms session continuity by referencing the prior message. Verify a session directory exists at `~/.kimi/sessions/<uuid>/` matching the state.json `chats[chat_id]`.
 6. From a different (non-allowed) Telegram account: send a message → daemon ignores it (verified via `bridge.log`), bot does not reply.
 7. From inside Kimi: `kimi -p "use the bridge tool to check status"` → returns active/running.
-8. Confirm the existing `claude-to-im` daemon is still running in parallel: `bash ~/.claude/skills/claude-to-im/scripts/daemon.sh status` reports running, no port conflicts, no shared pid file.
-9. Stop with `systemctl --user stop kimi-telegram-bridge.service`, send another Telegram message → no reply.
+8. Stop with `systemctl --user stop kimi-telegram-bridge.service`, send another Telegram message → no reply.
 
 ## Open questions deferred to implementation
 

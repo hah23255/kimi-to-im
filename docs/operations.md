@@ -297,7 +297,7 @@ echo '{"action":"setup"}' | .venv/bin/python -m src.control
 The `setup` output gives a per-check report:
 
 ```
-config path: /home/i/.kimi/plugins/telegram-bridge/config.json
+config path: /home/YOUR_USER/.kimi/plugins/telegram-bridge/config.json
 ✓ config.json loaded
 ✓ kimi CLI found: kimi, version 1.39.0
 ✓ telegram token valid (bot @your_bot_username)
@@ -410,7 +410,7 @@ Re-enable later with `systemctl --user enable --now kimi-telegram-bridge.service
 
 ## Pushing to GitHub
 
-The repo is local-only at `/home/i/.kimi/plugins/telegram-bridge/`. To publish:
+The repo lives at `~/.kimi/plugins/telegram-bridge/`. To publish:
 
 1. Create the empty repository on GitHub (web UI, `gh repo create`, etc.). Do not initialise it with a README or LICENSE — those already exist locally and would conflict.
 
