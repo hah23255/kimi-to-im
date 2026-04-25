@@ -26,7 +26,8 @@ fi
 if [[ ! -d .venv ]]; then
     uv venv .venv --python 3.11
 fi
-.venv/bin/pip install --quiet -e .
+# uv venv does not ship pip; use `uv pip` against the venv (auto-detected via .venv/).
+uv pip install --quiet -e .
 
 VENV_PYTHON="${PLUGIN_DIR}/.venv/bin/python"
 
