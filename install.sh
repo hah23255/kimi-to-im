@@ -23,7 +23,9 @@ if ! command -v uv >/dev/null 2>&1; then
     echo "uv is required (https://github.com/astral-sh/uv)" >&2
     exit 3
 fi
-uv venv .venv --python 3.11
+if [[ ! -d .venv ]]; then
+    uv venv .venv --python 3.11
+fi
 .venv/bin/pip install --quiet -e .
 
 VENV_PYTHON="${PLUGIN_DIR}/.venv/bin/python"

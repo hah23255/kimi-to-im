@@ -1,8 +1,5 @@
 [Unit]
 Description=Kimi Telegram Bridge
-Documentation=https://github.com/.../telegram-bridge
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple
