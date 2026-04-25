@@ -143,6 +143,11 @@ def main() -> None:  # pragma: no cover — wiring only
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    # httpx logs every request URL at INFO; the URL contains the bot token in
+    # the path. Suppress to WARNING so the token never lands in bridge.log.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     cfg_path = Path(os.environ.get("KIMI_BRIDGE_CONFIG") or DEFAULT_CONFIG_PATH)
     state_path = Path(os.environ.get("KIMI_BRIDGE_STATE") or DEFAULT_STATE_PATH)
     cfg = load_config(cfg_path)
