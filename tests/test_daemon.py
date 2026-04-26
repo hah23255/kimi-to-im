@@ -32,6 +32,7 @@ class _FakeTelegram:
     async def get_updates(self, offset: int, timeout: int = 30) -> list[dict[str, Any]]:
         if self.updates_to_serve:
             return self.updates_to_serve.pop(0)
+        await asyncio.sleep(0)
         return []
 
     async def send_message(self, chat_id: int, text: str) -> None:

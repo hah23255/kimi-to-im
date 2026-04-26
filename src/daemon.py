@@ -131,6 +131,12 @@ async def run(
                         "sendMessage failed for chat=%s: %s", msg.chat_id, err
                     )
 
+            if not updates:
+                # Yield control so scheduled callbacks (e.g. stop_event) can fire.
+                # In production Telegram long-polling blocks; in tests the fake
+                # client returns immediately, which can starve the event loop.
+                await asyncio.sleep(0)
+
             save_state(state_path, state)
 
 
