@@ -26,7 +26,12 @@ DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.json"
 DEFAULT_STATE_PATH = Path.home() / ".kimi" / "bridge" / "state.json"
 DEFAULT_KIMI_BIN = "kimi"
 LONG_POLL_TIMEOUT = 30
-KIMI_TIMEOUT_S = 300.0  # bound a hung kimi process; surfaces as exit_code=124
+KIMI_TIMEOUT_S = 900.0  # bound a hung kimi process; surfaces as exit_code=124 (raised from 300s — K2.6 thinking + ~160K ctx exceeds 5min)
+TYPING_REFRESH_S = 4.0  # Telegram typing indicator lasts ~5s; refresh below that
+PROGRESS_NOTICES = (  # (after_seconds, message) — sent during long turns
+    (250.0, "🤔 Still thinking… (over 4 min so far; timeout at 15 min)"),
+    (600.0, "🤔 Still thinking… (over 10 min so far; timeout at 15 min)"),
+)
 
 
 class _TelegramLike(Protocol):
@@ -38,6 +43,44 @@ class _TelegramLike(Protocol):
 
 
 RunKimiFunc = Callable[..., Awaitable[KimiResult]]
+
+
+async def _heartbeat(
+    tg: "_TelegramLike",
+    chat_id: int,
+    stop_event: asyncio.Event,
+) -> None:
+    """Keep the Telegram 'typing' indicator alive and post progress notices.
+
+    Runs concurrently with the kimi subprocess. Cancelled when the turn
+    completes or fails.
+    """
+    start = time.perf_counter()
+    notices_sent: set[float] = set()
+    try:
+        while not stop_event.is_set():
+            try:
+                await tg.send_chat_action(chat_id, "typing")
+            except Exception as err:
+                LOG.debug("heartbeat sendChatAction failed: %s", err)
+
+            elapsed = time.perf_counter() - start
+            for after_s, msg in PROGRESS_NOTICES:
+                if elapsed >= after_s and after_s not in notices_sent:
+                    notices_sent.add(after_s)
+                    try:
+                        await tg.send_message(chat_id, msg)
+                    except Exception as err:
+                        LOG.debug("heartbeat sendMessage failed: %s", err)
+
+            try:
+                await asyncio.wait_for(
+                    stop_event.wait(), timeout=TYPING_REFRESH_S
+                )
+            except asyncio.TimeoutError:
+                pass  # tick again
+    except asyncio.CancelledError:
+        return
 
 
 def _session_for(state: State, chat_id: int) -> str:
@@ -99,15 +142,27 @@ async def run(
                 save_state(state_path, state)  # persist new session id before running
 
                 turn_start = time.perf_counter()
-                result = await run_kimi_func(
-                    prompt=msg.text,
-                    session_id=sid,
-                    workdir=cfg.kimi.default_workdir,
-                    model=cfg.kimi.model,
-                    agent=cfg.kimi.agent,
-                    kimi_path=kimi_path,
-                    timeout=KIMI_TIMEOUT_S,
+                heartbeat_stop = asyncio.Event()
+                heartbeat_task = asyncio.create_task(
+                    _heartbeat(tg, msg.chat_id, heartbeat_stop)
                 )
+                try:
+                    result = await run_kimi_func(
+                        prompt=msg.text,
+                        session_id=sid,
+                        workdir=cfg.kimi.default_workdir,
+                        model=cfg.kimi.model,
+                        agent=cfg.kimi.agent,
+                        kimi_path=kimi_path,
+                        timeout=KIMI_TIMEOUT_S,
+                    )
+                finally:
+                    heartbeat_stop.set()
+                    heartbeat_task.cancel()
+                    try:
+                        await heartbeat_task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 elapsed_ms = int((time.perf_counter() - turn_start) * 1000)
                 LOG.info(
                     "turn chat=%d session=%s exit=%d ms=%d reply_len=%d",
@@ -118,9 +173,20 @@ async def run(
                     len(result.text or ""),
                 )
 
-                if result.exit_code != 0:
+                if result.exit_code == 124:
+                    # Friendly timeout message — kimi was killed by our bound
+                    minutes = KIMI_TIMEOUT_S / 60
+                    reply = (
+                        f"⏱️ Kimi is still thinking — your turn was cut off at "
+                        f"{minutes:.0f} min to protect against hung processes.\n\n"
+                        "Suggestions:\n"
+                        "• Send a shorter follow-up to continue from where it left off\n"
+                        "• Or split the task into smaller steps\n"
+                        "• Or run /reset and start fresh (drops accumulated context)"
+                    )
+                elif result.exit_code != 0:
                     snippet = result.stderr[:500].strip() or "no stderr"
-                    reply = f"⚠️ kimi error: {snippet}"
+                    reply = f"⚠️ kimi error (exit {result.exit_code}): {snippet}"
                 else:
                     reply = result.text or "(empty reply)"
 
