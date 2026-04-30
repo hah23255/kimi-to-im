@@ -35,7 +35,7 @@ Message [@userinfobot](https://t.me/userinfobot). It replies with your numeric u
 ## Step 3 — Clone
 
 ```sh
-git clone https://github.com/Alfa-ai-ccvs-tech/kimi-to-im.git ~/.kimi/plugins/telegram-bridge
+git clone https://github.com/hah23255/kimi-to-im.git ~/.kimi/plugins/telegram-bridge
 cd ~/.kimi/plugins/telegram-bridge
 ```
 

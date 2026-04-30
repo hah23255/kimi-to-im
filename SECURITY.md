@@ -4,7 +4,7 @@
 
 If you find a security issue in `kimi-to-im`, please **do not open a public GitHub issue**.
 
-Instead, open a private security advisory at <https://github.com/Alfa-ai-ccvs-tech/kimi-to-im/security/advisories/new>, or email the maintainer with the subject prefix `[security]`. Include:
+Instead, open a private security advisory at <https://github.com/hah23255/kimi-to-im/security/advisories/new>, or email the maintainer with the subject prefix `[security]`. Include:
 
 - A clear description of the issue.
 - Reproduction steps or a proof-of-concept.
@@ -69,7 +69,9 @@ The bridge:
 - Validates that `allowed_user_ids` entries are integers (and rejects bools, which Python would otherwise accept as `int`).
 - Validates persisted session ids against the uuid4-hex format on load, so a tampered `state.json` cannot inject argv flags into the `kimi` subprocess.
 - Suppresses `httpx`/`httpcore` INFO-level logging in both daemon and plugin-tool entry points so the bot token (which appears in URL paths) never reaches the log file.
-- Bounds every `kimi` invocation with a 300-second timeout so a hung subprocess cannot stall the bridge indefinitely.
+- Bounds every `kimi` invocation with a 900-second timeout so a hung subprocess cannot stall the bridge indefinitely (raised from 300s; aligns with the 15-minute Kimi OAuth JWT TTL — the natural upper bound).
+- Surfaces a friendly user-facing message on timeout (exit code 124) instead of leaking the raw subprocess `stderr`.
+- Runs a concurrent heartbeat task that refreshes the Telegram "typing" indicator and posts progress notices at 250s and 600s, so the user knows the bot is still working rather than hung.
 
 ## Periodic audits
 

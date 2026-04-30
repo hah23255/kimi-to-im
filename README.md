@@ -3,7 +3,7 @@
 > Chat with the [Kimi CLI](https://github.com/MoonshotAI/kimi-cli) from Telegram. Self-hosted, single-user, ~600 lines of Python.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![CI](https://github.com/Alfa-ai-ccvs-tech/kimi-to-im/actions/workflows/test.yml/badge.svg)](https://github.com/Alfa-ai-ccvs-tech/kimi-to-im/actions/workflows/test.yml)
+[![CI](https://github.com/hah23255/kimi-to-im/actions/workflows/test.yml/badge.svg)](https://github.com/hah23255/kimi-to-im/actions/workflows/test.yml)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 You already use Kimi CLI at your desk. This bridge lets you keep the same conversation going from your phone — over Telegram — without changing how Kimi runs locally. You send a message, the bridge spawns `kimi` on your machine, and the reply lands back in Telegram. Sessions persist per chat, so follow-ups pick up where you left off.
@@ -35,7 +35,7 @@ You need: Linux with `systemd --user`, Python 3.11+, [`uv`](https://docs.astral.
 **3. Install.**
 
 ```sh
-git clone https://github.com/Alfa-ai-ccvs-tech/kimi-to-im.git ~/.kimi/plugins/telegram-bridge
+git clone https://github.com/hah23255/kimi-to-im.git ~/.kimi/plugins/telegram-bridge
 cd ~/.kimi/plugins/telegram-bridge
 bash install.sh
 ```
