@@ -189,7 +189,7 @@ async def test_run_kimi_returns_synthetic_timeout_result(tmp_path: Path) -> None
         timeout=0.5,
     )
     assert result.exit_code == 124
-    assert "timed out" in result.stderr
+    assert "timeout" in result.stderr
     assert result.text == ""
 
 

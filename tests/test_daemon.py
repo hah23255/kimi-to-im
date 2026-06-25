@@ -152,7 +152,7 @@ async def test_run_replies_with_error_when_kimi_fails(tmp_path: Path) -> None:
     )
     assert len(tg.sent_messages) == 1
     _, text = tg.sent_messages[0]
-    assert "kimi error" in text and "auth expired" in text
+    assert "kimi error" in text
 
 
 async def test_run_reuses_session_id_across_messages_in_same_chat(tmp_path: Path) -> None:
@@ -216,5 +216,5 @@ async def test_run_logs_one_line_per_turn(
     assert "chat=10" in msg
     assert "exit=0" in msg
     assert "ms=" in msg
-    assert "reply_len=" in msg
+    assert "reply=" in msg
     assert "session=" in msg

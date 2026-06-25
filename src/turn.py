@@ -1,0 +1,92 @@
+"""Turn execution — streaming kimi invocation with event dispatch."""
+from __future__ import annotations
+
+import asyncio
+import logging
+import time
+import uuid
+from typing import TYPE_CHECKING
+
+from src.kimi_stream import run_kimi_stream
+from src.events import EventBuffer, dispatch_events, heartbeat
+
+if TYPE_CHECKING:
+    from src.config import Config
+    from src.daemon import _TelegramLike
+    from src.state import State
+    from src.telegram import InboundMessage
+
+LOG = logging.getLogger("kimi_telegram_bridge")
+KIMI_TIMEOUT_S = 900.0
+
+
+async def execute_streaming(
+    tg: "_TelegramLike", chat_id: int, msg: "InboundMessage",
+    sid: str, cfg: "Config", kimi_path: str, state: "State",
+) -> tuple[str, int]:
+    """Run one kimi turn with real-time event dispatch. Returns (reply_text, exit_code)."""
+    buf = EventBuffer()
+    hb_stop = asyncio.Event()
+    hb_task = asyncio.create_task(heartbeat(tg, chat_id, hb_stop))
+    turn_start = time.perf_counter()
+
+    try:
+        result = await run_kimi_stream(
+            prompt=msg.text, session_id=sid,
+            workdir=cfg.kimi.default_workdir,
+            model=state.model_overrides.get(chat_id) or cfg.kimi.model,
+            agent=cfg.kimi.agent, kimi_path=kimi_path, timeout=KIMI_TIMEOUT_S)
+        te = state.thinking_enabled.get(chat_id, True)
+        await dispatch_events(tg, chat_id, result.events, buf, te)
+        await dispatch_events(tg, chat_id, [], buf, te)  # final flush
+    finally:
+        hb_stop.set()
+        hb_task.cancel()
+        try:
+            await hb_task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    elapsed = int((time.perf_counter() - turn_start) * 1000)
+    LOG.info("turn chat=%d session=%s exit=%d ms=%d reply=%d thinking=%d tools=%d",
+             chat_id, sid[:8], result.exit_code, elapsed,
+             len(result.text or ""), result.total_thinking_chars, result.total_tool_calls)
+    return result.text or "", result.exit_code
+
+
+async def execute_legacy(
+    tg: "_TelegramLike", chat_id: int, msg: "InboundMessage",
+    sid: str, cfg: "Config", kimi_path: str,
+    run_kimi_func, state: "State",
+) -> tuple[str, int, str]:
+    """Run one turn via legacy synchronous kimi. For tests and fallback."""
+    hb_stop = asyncio.Event()
+    hb_task = asyncio.create_task(heartbeat(tg, chat_id, hb_stop))
+    turn_start = time.perf_counter()
+    try:
+        result = await run_kimi_func(
+            prompt=msg.text, session_id=sid,
+            workdir=cfg.kimi.default_workdir,
+            model=cfg.kimi.model, agent=cfg.kimi.agent,
+            kimi_path=kimi_path, timeout=KIMI_TIMEOUT_S)
+    finally:
+        hb_stop.set()
+        hb_task.cancel()
+        try:
+            await hb_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    elapsed = int((time.perf_counter() - turn_start) * 1000)
+    LOG.info("turn chat=%d session=%s exit=%d ms=%d reply=%d",
+             chat_id, sid[:8], result.exit_code, elapsed, len(result.text or ""))
+    return result.text or "", result.exit_code, result.stderr or ""
+
+
+def get_or_create_session(state: "State", chat_id: int) -> str:
+    """Get existing session or allocate new uuid4 hex."""
+    sid = state.chats.get(chat_id)
+    if sid:
+        return sid
+    sid = uuid.uuid4().hex
+    state.chats[chat_id] = sid
+    return sid
