@@ -8,11 +8,12 @@ import signal
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 
-from src.commands import handle as handle_command
 from src.config import Config, load_config
+from src.commands import handle as handle_command
 from src.health import record_turn, record_error, start_server
 from src.kimi_runner import KimiResult
-from src.media import (build_media_prompt, MAX_PHOTO_SIZE, MAX_FILE_SIZE)
+from src.media import build_media_prompt
+from src.queue import TurnQueue
 from src.state import State, load_state, save_state
 from src.telegram import InboundMessage, TelegramClient, is_authorized, parse_update
 from src.turn import execute_streaming, execute_legacy, get_or_create_session
@@ -22,6 +23,7 @@ DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 DEFAULT_STATE_PATH = Path.home() / ".kimi" / "bridge" / "state.json"
 LONG_POLL_TIMEOUT = 30
 KIMI_TIMEOUT_S = 900.0
+_QUEUE = TurnQueue()
 
 
 class _TelegramLike(Protocol):
@@ -56,11 +58,31 @@ def _format_reply(text: str, code: int) -> str:
     return text
 
 
+async def _do_turn(msg: InboundMessage, tg: _TelegramLike, state: State,
+                   cfg: Config, kimi_path: str,
+                   run_kimi_func: RunKimiFunc, streaming: bool) -> None:
+    prompt = await build_media_prompt(msg, tg, state, cfg)
+    if prompt is None:
+        return
+    try:
+        await tg.send_chat_action(msg.chat_id, "typing")
+    except Exception:
+        pass
+    sid = get_or_create_session(state, msg.chat_id)
+    save_state(DEFAULT_STATE_PATH, state)
+    text, code = await _exec_turn(tg, msg, sid, cfg, kimi_path, state,
+                                   run_kimi_func, streaming, prompt)
+    reply = _format_reply(text, code)
+    try:
+        await tg.send_message(msg.chat_id, reply or "(empty reply)")
+    except Exception as err:
+        LOG.error("sendMessage failed chat=%s: %s", msg.chat_id, err)
 
-async def _execute_turn(tg: _TelegramLike, msg: InboundMessage, sid: str,
-                        cfg: Config, kimi_path: str, state: State,
-                        run_kimi_func: RunKimiFunc, streaming: bool,
-                        prompt: str) -> tuple[str, int]:
+
+async def _exec_turn(tg: _TelegramLike, msg: InboundMessage, sid: str,
+                     cfg: Config, kimi_path: str, state: State,
+                     run_kimi_func: RunKimiFunc, streaming: bool,
+                     prompt: str) -> tuple[str, int]:
     if streaming:
         orig = msg.text
         try:
@@ -73,27 +95,30 @@ async def _execute_turn(tg: _TelegramLike, msg: InboundMessage, sid: str,
     return text, code
 
 
-async def _process_message(msg: InboundMessage, tg: _TelegramLike, state: State,
-                           cfg: Config, kimi_path: str,
-                           run_kimi_func: RunKimiFunc, streaming: bool) -> None:
+async def _process_one(msg: InboundMessage, tg: _TelegramLike, state: State,
+                       cfg: Config, kimi_path: str,
+                       run_kimi_func: RunKimiFunc, streaming: bool) -> None:
+    if msg.text.strip().lower() == "/queue":
+        lines = _QUEUE.status()
+        await tg.send_message(msg.chat_id, "📋 " + "\n".join(lines))
+        return
     if await handle_command(msg, tg, state, cfg):
         return
-    prompt = await build_media_prompt(msg, tg, state, cfg)
-    if prompt is None:
+    status = await _QUEUE.submit(msg)
+    if status is not None:
+        await tg.send_message(msg.chat_id, status)
         return
-    try:
-        await tg.send_chat_action(msg.chat_id, "typing")
-    except Exception:
-        LOG.debug("sendChatAction pre-turn failed")
-    sid = get_or_create_session(state, msg.chat_id)
-    save_state(DEFAULT_STATE_PATH, state)
-    text, code = await _execute_turn(tg, msg, sid, cfg, kimi_path, state,
-                                      run_kimi_func, streaming, prompt)
-    reply = _format_reply(text, code)
-    try:
-        await tg.send_message(msg.chat_id, reply or "(empty reply)")
-    except Exception as err:
-        LOG.error("sendMessage failed chat=%s: %s", msg.chat_id, err)
+    await _do_turn(msg, tg, state, cfg, kimi_path, run_kimi_func, streaming)
+    _QUEUE.complete()
+    # Drain pending
+    while True:
+        next_item = _QUEUE.next()
+        if next_item is None:
+            break
+        nxt_msg, nxt_fut = next_item
+        await _do_turn(nxt_msg, tg, state, cfg, kimi_path, run_kimi_func, streaming)
+        _QUEUE.complete()
+        nxt_fut.set_result(None)
 
 
 async def _fetch_updates(tg: _TelegramLike, offset: int) -> list[dict[str, Any]]:
@@ -112,6 +137,7 @@ async def _fetch_updates(tg: _TelegramLike, offset: int) -> list[dict[str, Any]]
 async def run(*, cfg: Config, state_path: Path, tg: _TelegramLike,
               run_kimi_func: RunKimiFunc, kimi_path: str,
               stop_event: asyncio.Event, use_streaming: bool = False) -> None:
+    _QUEUE.owner_chat_id = cfg.telegram.allowed_user_ids[0] if cfg.telegram.allowed_user_ids else 0
     state = load_state(state_path)
     async with tg:
         while not stop_event.is_set():
@@ -124,8 +150,8 @@ async def run(*, cfg: Config, state_path: Path, tg: _TelegramLike,
                 if not is_authorized(m, cfg.telegram):
                     LOG.info("drop unauth user=%s", m.user_id)
                     continue
-                await _process_message(m, tg, state, cfg, kimi_path,
-                                        run_kimi_func, use_streaming)
+                await _process_one(m, tg, state, cfg, kimi_path,
+                                    run_kimi_func, use_streaming)
             if not updates:
                 await asyncio.sleep(0)
             save_state(state_path, state)
