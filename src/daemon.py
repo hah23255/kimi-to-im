@@ -133,6 +133,41 @@ async def run(
                     )
                     continue
 
+                # --- bridge-level Telegram commands (Kimi CLI doesn't know these) ----
+                stripped = msg.text.strip()
+                if stripped == "/start":
+                    reply = (
+                        "👋 Welcome! I'm your Kimi bridge bot.\n\n"
+                        "Send me any message and I'll forward it to Kimi. "
+                        "Your conversation history is preserved per chat.\n\n"
+                        "Commands:\n"
+                        "/start – this message\n"
+                        "/help – usage help\n"
+                        "/reset – clear context (Kimi CLI native)\n"
+                        "/clear – clear context (Kimi CLI native)"
+                    )
+                elif stripped == "/help":
+                    reply = (
+                        "📖 Kimi Bridge Help\n\n"
+                        "Send any text message to chat with Kimi. Replies may take a few "
+                        "seconds up to several minutes depending on the task.\n\n"
+                        "Native Kimi slash commands also work (e.g. /clear, /reset).\n\n"
+                        "Tips:\n"
+                        "• Session history is preserved automatically\n"
+                        "• Long replies are split into multiple messages\n"
+                        "• Timeout is 15 minutes per turn"
+                    )
+                else:
+                    reply = None
+
+                if reply is not None:
+                    try:
+                        await tg.send_message(msg.chat_id, reply)
+                    except Exception as err:
+                        LOG.error("sendMessage failed for chat=%s: %s", msg.chat_id, err)
+                    continue
+                # ----------------------------------------------------------------
+
                 try:
                     await tg.send_chat_action(msg.chat_id, "typing")
                 except Exception as err:

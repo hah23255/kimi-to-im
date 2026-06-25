@@ -1,0 +1,38 @@
+[Unit]
+Description=Kimi Telegram Bridge
+
+[Service]
+Type=simple
+WorkingDirectory=/home/i/.kimi/plugins/telegram-bridge
+ExecStart=/home/i/.kimi/plugins/telegram-bridge/.venv/bin/python -m src.daemon
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/i/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Restart=always
+RestartSec=5s
+
+# --- Production hardening (2026-06-25 eval) ---
+MemoryMax=512M
+MemoryHigh=384M
+RuntimeMaxSec=86400
+
+# --- Hardening (audit F-2) ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
+StandardOutput=append:/home/i/.kimi/bridge/logs/bridge.log
+StandardError=append:/home/i/.kimi/bridge/logs/bridge.log
+
+[Install]
+WantedBy=default.target
