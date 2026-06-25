@@ -1,4 +1,4 @@
-"""Telegram glue: pure helpers (this task) + async HTTP client (Task 5)."""
+"""Telegram glue: pure helpers + async HTTP client with media support."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,33 +13,31 @@ class InboundMessage:
     chat_id: int
     user_id: int
     text: str
+    photo: list[dict[str, Any]] | None = None
+    document: dict[str, Any] | None = None
 
 
 def parse_update(update: dict[str, Any]) -> InboundMessage | None:
-    """Return InboundMessage for a fresh text message, else None.
-
-    Skips edited messages, non-text messages, and updates with no message.
-    """
+    """Return InboundMessage for text, photo, or document message."""
     msg = update.get("message")
     if not isinstance(msg, dict):
         return None
-    text = msg.get("text")
-    if not isinstance(text, str):
+    text = msg.get("text") or msg.get("caption") or ""
+    photo = msg.get("photo")
+    doc = msg.get("document")
+    if not text and photo is None and doc is None:
         return None
     chat = msg.get("chat") or {}
     sender = msg.get("from") or {}
-    chat_id = chat.get("id")
-    user_id = sender.get("id")
-    update_id = update.get("update_id")
-    if (
-        not isinstance(chat_id, int)
-        or not isinstance(user_id, int)
-        or not isinstance(update_id, int)
-    ):
+    cid = chat.get("id")
+    uid = sender.get("id")
+    uid_n = update.get("update_id")
+    if not isinstance(cid, int) or not isinstance(uid, int) or not isinstance(uid_n, int):
         return None
     return InboundMessage(
-        update_id=update_id, chat_id=chat_id, user_id=user_id, text=text
-    )
+        update_id=uid_n, chat_id=cid, user_id=uid, text=text,
+        photo=list(photo) if isinstance(photo, list) else None,
+        document=doc if isinstance(doc, dict) else None)
 
 
 def is_authorized(msg: InboundMessage, cfg: TelegramConfig) -> bool:
@@ -56,7 +54,6 @@ def chunk_message(text: str, max_len: int = 4096) -> list[str]:
         return []
     if len(text) <= max_len:
         return [text]
-
     chunks: list[str] = []
     remaining = text
     while remaining:
@@ -65,9 +62,8 @@ def chunk_message(text: str, max_len: int = 4096) -> list[str]:
             break
         cut = remaining.rfind("\n", 0, max_len)
         if cut == -1:
-            cut = max_len  # hard split, no newline within window
+            cut = max_len
         chunks.append(remaining[:cut])
-        # If we cut on a newline, drop the boundary newline from the next chunk.
         if cut < len(remaining) and remaining[cut:cut + 1] == "\n":
             remaining = remaining[cut + 1:]
         else:
@@ -82,14 +78,12 @@ import httpx
 class TelegramClient:
     """Thin async wrapper around the Telegram bot HTTP API."""
 
-    def __init__(
-        self, bot_token: str, *, base_url: str = "https://api.telegram.org"
-    ) -> None:
+    def __init__(self, bot_token: str, *, base_url: str = "https://api.telegram.org") -> None:
         self._base = f"{base_url}/bot{bot_token}"
+        self._bot_token = bot_token
         self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "TelegramClient":
-        # 35s read timeout > 30s long-poll timeout to leave slack.
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(35.0))
         return self
 
@@ -98,46 +92,41 @@ class TelegramClient:
         await self._client.aclose()
         self._client = None
 
-    async def get_updates(
-        self, offset: int, timeout: int = 30
-    ) -> list[dict[str, Any]]:
+    async def get_updates(self, offset: int, timeout: int = 30) -> list[dict[str, Any]]:
         assert self._client is not None
-        params = {
-            "offset": offset,
-            "timeout": timeout,
-            "allowed_updates": '["message"]',
-        }
-        r = await self._client.get(f"{self._base}/getUpdates", params=params)
+        r = await self._client.get(f"{self._base}/getUpdates", params={
+            "offset": offset, "timeout": timeout, "allowed_updates": '["message"]'})
         data = r.json()
         if not data.get("ok"):
-            raise RuntimeError(
-                f"telegram getUpdates failed: {data.get('description', 'unknown error')}"
-            )
+            raise RuntimeError(f"telegram getUpdates failed: {data.get('description')}")
         return list(data.get("result") or [])
 
     async def send_message(self, chat_id: int, text: str) -> None:
         assert self._client is not None
         for chunk in chunk_message(text):
-            r = await self._client.post(
-                f"{self._base}/sendMessage",
-                json={"chat_id": chat_id, "text": chunk},
-            )
+            r = await self._client.post(f"{self._base}/sendMessage",
+                                         json={"chat_id": chat_id, "text": chunk})
             data = r.json()
             if not data.get("ok"):
-                raise RuntimeError(
-                    f"telegram sendMessage failed: {data.get('description', 'unknown error')}"
-                )
+                raise RuntimeError(f"sendMessage failed: {data.get('description')}")
 
-    async def send_chat_action(
-        self, chat_id: int, action: str = "typing"
-    ) -> None:
+    async def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         assert self._client is not None
-        r = await self._client.post(
-            f"{self._base}/sendChatAction",
-            json={"chat_id": chat_id, "action": action},
-        )
+        r = await self._client.post(f"{self._base}/sendChatAction",
+                                     json={"chat_id": chat_id, "action": action})
         data = r.json()
         if not data.get("ok"):
-            raise RuntimeError(
-                f"telegram sendChatAction failed: {data.get('description', 'unknown error')}"
-            )
+            raise RuntimeError(f"sendChatAction failed: {data.get('description')}")
+
+    async def get_file(self, file_id: str) -> bytes:
+        """Download a file from Telegram by file_id."""
+        assert self._client is not None
+        r = await self._client.get(f"{self._base}/getFile",
+                                    params={"file_id": file_id})
+        data = r.json()
+        if not data.get("ok"):
+            raise RuntimeError(f"getFile failed: {data.get('description')}")
+        file_path = data["result"]["file_path"]
+        r2 = await self._client.get(
+            f"https://api.telegram.org/file/bot{self._bot_token}/{file_path}")
+        return r2.content

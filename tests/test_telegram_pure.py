@@ -33,11 +33,13 @@ def test_parse_update_returns_none_when_no_message() -> None:
     assert parse_update({"update_id": 100}) is None
 
 
-def test_parse_update_returns_none_for_non_text_message() -> None:
+def test_parse_update_returns_message_for_photo() -> None:
     upd = _msg()
     del upd["message"]["text"]
     upd["message"]["photo"] = [{"file_id": "abc"}]
-    assert parse_update(upd) is None
+    result = parse_update(upd)
+    assert result is not None
+    assert result.photo == [{"file_id": "abc"}]
 
 
 def test_parse_update_returns_none_for_edited_message() -> None:

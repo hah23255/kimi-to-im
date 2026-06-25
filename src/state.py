@@ -23,6 +23,7 @@ class State:
     # Per-chat preferences (Phase 2)
     thinking_enabled: dict[int, bool] = field(default_factory=dict)
     model_overrides: dict[int, str] = field(default_factory=dict)
+    photo_enabled: dict[int, bool] = field(default_factory=dict)
 
 
 def load_state(path: Path) -> State:
@@ -33,8 +34,6 @@ def load_state(path: Path) -> State:
     except json.JSONDecodeError:
         return State()
     chats_raw = raw.get("chats") or {}
-    thinking_raw = raw.get("thinking_enabled") or {}
-    models_raw = raw.get("model_overrides") or {}
     return State(
         last_update_id=int(raw.get("last_update_id", 0)),
         chats={
@@ -44,13 +43,18 @@ def load_state(path: Path) -> State:
         },
         thinking_enabled={
             int(k): bool(v)
-            for k, v in thinking_raw.items()
+            for k, v in (raw.get("thinking_enabled") or {}).items()
             if isinstance(k, (int, str))
         },
         model_overrides={
             int(k): str(v)
-            for k, v in models_raw.items()
+            for k, v in (raw.get("model_overrides") or {}).items()
             if isinstance(v, str) and _MODEL_RE.match(v)
+        },
+        photo_enabled={
+            int(k): bool(v)
+            for k, v in (raw.get("photo_enabled") or {}).items()
+            if isinstance(k, (int, str))
         },
     )
 
@@ -66,5 +70,7 @@ def save_state(path: Path, state: State) -> None:
         payload["thinking_enabled"] = {str(k): v for k, v in state.thinking_enabled.items()}
     if state.model_overrides:
         payload["model_overrides"] = {str(k): v for k, v in state.model_overrides.items()}
+    if state.photo_enabled:
+        payload["photo_enabled"] = {str(k): v for k, v in state.photo_enabled.items()}
     tmp.write_text(json.dumps(payload, indent=2))
     os.replace(tmp, path)

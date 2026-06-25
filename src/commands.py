@@ -5,6 +5,8 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
+from src.media import list_inbox, clean_inbox
+
 DEFAULT_MODEL = "kimi-for-coding"
 
 if TYPE_CHECKING:
@@ -33,6 +35,8 @@ async def handle(
         "/model":    _cmd_model,
         "/compact":  _cmd_compact,
         "/reset":    _cmd_reset,
+        "/image":    _cmd_image,
+        "/files":    _cmd_files,
     }
     handler = handlers.get(cmd)
     if handler:
@@ -118,3 +122,25 @@ async def _cmd_reset(tg: "_TelegramLike", cid: int, _a: str, s: "State", _c: "Co
         await tg.send_message(cid, "♻️ Session cleared.")
     else:
         await tg.send_message(cid, "No active session.")
+
+
+async def _cmd_image(tg: "_TelegramLike", cid: int, args: str, s: "State", _c: "Config") -> None:
+    mode = args.strip().lower()
+    if mode in ("on", "true", "1"):
+        s.photo_enabled[cid] = True
+        await tg.send_message(cid, "📸 Photo processing: ON")
+    elif mode in ("off", "false", "0"):
+        s.photo_enabled[cid] = False
+        await tg.send_message(cid, "📸 Photo processing: OFF")
+    else:
+        cur = "ON" if s.photo_enabled.get(cid, True) else "OFF"
+        await tg.send_message(cid, f"📸 Photo processing: {cur}\n/image on|off")
+
+
+async def _cmd_files(tg: "_TelegramLike", cid: int, _a: str, _s: "State", c: "Config") -> None:
+    wd = c.kimi.default_workdir
+    files = list_inbox(wd)
+    if not files:
+        await tg.send_message(cid, "📂 Inbox empty.")
+    else:
+        await tg.send_message(cid, "📂 Recent uploads:\n" + "\n".join(f"• {f}" for f in files))

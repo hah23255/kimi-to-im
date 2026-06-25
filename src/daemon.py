@@ -12,6 +12,7 @@ from src.commands import handle as handle_command
 from src.config import Config, load_config
 from src.health import record_turn, record_error, start_server
 from src.kimi_runner import KimiResult
+from src.media import (build_media_prompt, MAX_PHOTO_SIZE, MAX_FILE_SIZE)
 from src.state import State, load_state, save_state
 from src.telegram import InboundMessage, TelegramClient, is_authorized, parse_update
 from src.turn import execute_streaming, execute_legacy, get_or_create_session
@@ -55,45 +56,44 @@ def _format_reply(text: str, code: int) -> str:
     return text
 
 
-async def _execute_turn(
-    tg: _TelegramLike, msg: InboundMessage, sid: str,
-    cfg: Config, kimi_path: str, state: State,
-    run_kimi_func: RunKimiFunc, streaming: bool,
-) -> tuple[str, int]:
+
+async def _execute_turn(tg: _TelegramLike, msg: InboundMessage, sid: str,
+                        cfg: Config, kimi_path: str, state: State,
+                        run_kimi_func: RunKimiFunc, streaming: bool,
+                        prompt: str) -> tuple[str, int]:
     if streaming:
-        return await execute_streaming(
-            tg, msg.chat_id, msg, sid, cfg, kimi_path, state)
+        orig = msg.text
+        try:
+            object.__setattr__(msg, 'text', prompt)
+            return await execute_streaming(tg, msg.chat_id, msg, sid, cfg, kimi_path, state)
+        finally:
+            object.__setattr__(msg, 'text', orig)
     text, code, _ = await execute_legacy(
         tg, msg.chat_id, msg, sid, cfg, kimi_path, run_kimi_func, state)
     return text, code
 
 
-async def _run_turn(
-    msg: InboundMessage, tg: _TelegramLike, state: State,
-    cfg: Config, kimi_path: str, run_kimi_func: RunKimiFunc, streaming: bool,
-) -> None:
+async def _process_message(msg: InboundMessage, tg: _TelegramLike, state: State,
+                           cfg: Config, kimi_path: str,
+                           run_kimi_func: RunKimiFunc, streaming: bool) -> None:
+    if await handle_command(msg, tg, state, cfg):
+        return
+    prompt = await build_media_prompt(msg, tg, state, cfg)
+    if prompt is None:
+        return
     try:
         await tg.send_chat_action(msg.chat_id, "typing")
     except Exception:
         LOG.debug("sendChatAction pre-turn failed")
     sid = get_or_create_session(state, msg.chat_id)
     save_state(DEFAULT_STATE_PATH, state)
-    text, code = await _execute_turn(
-        tg, msg, sid, cfg, kimi_path, state, run_kimi_func, streaming)
+    text, code = await _execute_turn(tg, msg, sid, cfg, kimi_path, state,
+                                      run_kimi_func, streaming, prompt)
     reply = _format_reply(text, code)
     try:
         await tg.send_message(msg.chat_id, reply or "(empty reply)")
     except Exception as err:
         LOG.error("sendMessage failed chat=%s: %s", msg.chat_id, err)
-
-
-async def _process_message(
-    msg: InboundMessage, tg: _TelegramLike, state: State,
-    cfg: Config, kimi_path: str, run_kimi_func: RunKimiFunc, streaming: bool,
-) -> None:
-    if await handle_command(msg, tg, state, cfg):
-        return
-    await _run_turn(msg, tg, state, cfg, kimi_path, run_kimi_func, streaming)
 
 
 async def _fetch_updates(tg: _TelegramLike, offset: int) -> list[dict[str, Any]]:
@@ -109,52 +109,36 @@ async def _fetch_updates(tg: _TelegramLike, offset: int) -> list[dict[str, Any]]
         return []
 
 
-def _process_updates(
-    updates: list[dict], tg: _TelegramLike, state: State,
-    cfg: Config, kimi_path: str, run_kimi_func: RunKimiFunc, streaming: bool,
-) -> list[asyncio.Task]:
-    tasks: list[asyncio.Task] = []
-    for upd in updates:
-        state.last_update_id = max(state.last_update_id, int(upd.get("update_id", 0)))
-        m = parse_update(upd)
-        if m is None:
-            continue
-        if not is_authorized(m, cfg.telegram):
-            LOG.info("drop unauth user=%s", m.user_id)
-            continue
-        tasks.append(asyncio.create_task(
-            _process_message(m, tg, state, cfg, kimi_path, run_kimi_func, streaming)))
-    return tasks
-
-
-async def run(
-    *, cfg: Config, state_path: Path, tg: _TelegramLike,
-    run_kimi_func: RunKimiFunc, kimi_path: str,
-    stop_event: asyncio.Event, use_streaming: bool = False,
-) -> None:
-    """Main poll-and-route loop."""
+async def run(*, cfg: Config, state_path: Path, tg: _TelegramLike,
+              run_kimi_func: RunKimiFunc, kimi_path: str,
+              stop_event: asyncio.Event, use_streaming: bool = False) -> None:
     state = load_state(state_path)
     async with tg:
         while not stop_event.is_set():
             updates = await _fetch_updates(tg, state.last_update_id + 1)
-            tasks = _process_updates(
-                updates, tg, state, cfg, kimi_path, run_kimi_func, use_streaming)
-            if tasks:
-                await asyncio.gather(*tasks)
+            for upd in updates:
+                state.last_update_id = max(state.last_update_id, int(upd.get("update_id", 0)))
+                m = parse_update(upd)
+                if m is None:
+                    continue
+                if not is_authorized(m, cfg.telegram):
+                    LOG.info("drop unauth user=%s", m.user_id)
+                    continue
+                await _process_message(m, tg, state, cfg, kimi_path,
+                                        run_kimi_func, use_streaming)
             if not updates:
                 await asyncio.sleep(0)
             save_state(state_path, state)
 
 
-def main() -> None:  # pragma: no cover
+def main() -> None:
     from src.kimi_runner import run_kimi
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-    cfg = load_config(Path(os.environ.get("KIMI_BRIDGE_CONFIG",
-                                           str(DEFAULT_CONFIG_PATH))))
+    cfg = load_config(Path(os.environ.get("KIMI_BRIDGE_CONFIG", str(DEFAULT_CONFIG_PATH))))
     sp = Path(os.environ.get("KIMI_BRIDGE_STATE", str(DEFAULT_STATE_PATH)))
     kp = os.environ.get("KIMI_BIN", "kimi")
     stop = asyncio.Event()
