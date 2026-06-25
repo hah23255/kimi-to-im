@@ -73,6 +73,8 @@ def _classify_assistant(raw: dict, ts: float) -> StreamEvent | None:
 
 
 def _classify_part(part: dict, ts: float) -> StreamEvent | None:
+    if not isinstance(part, dict):
+        return None
     ptype = part.get("type", "")
     if ptype == "text":
         t = part.get("text", "")

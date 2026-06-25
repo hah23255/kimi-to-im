@@ -1,22 +1,207 @@
-"""Unit tests for src.kimi_stream — event classifier, tool descriptions."""
+"""Stanford-level edge case tests for kimi_stream.py — target 75%+ coverage."""
 from __future__ import annotations
 
+import json
+
+import pytest
+
 from src.kimi_stream import (
-    StreamEvent,
-    StreamResult,
-    _classify_event,
-    _tool_desc,
-    _build_args,
+    StreamEvent, StreamResult,
+    _classify_event, _classify_assistant, _classify_part,
+    _tool_desc, _build_args,
+    run_kimi_stream,
 )
 
 
-# ── _classify_event ──────────────────────────────────────────────
+# ── _classify_event edge cases ────────────────────────────────────
+
+def test_classify_non_dict_int() -> None:
+    assert _classify_event(42) is None  # type: ignore[arg-type]
+
+
+def test_classify_non_dict_none() -> None:
+    assert _classify_event(None) is None  # type: ignore[arg-type]
+
+
+def test_classify_non_dict_list() -> None:
+    assert _classify_event([1, 2, 3]) is None  # type: ignore[arg-type]
+
+
+def test_classify_system_role_ignored() -> None:
+    assert _classify_event({"role": "system", "content": "..."}) is None
+
+
+def test_classify_user_role_ignored() -> None:
+    assert _classify_event({"role": "user", "content": "hello"}) is None
+
+
+def test_classify_tool_role_ignored() -> None:
+    assert _classify_event({"role": "tool", "content": "result"}) is None
+
+
+def test_classify_assistant_with_object_content() -> None:
+    # Non-string, non-list content — should return None
+    assert _classify_event({"role": "assistant", "content": 42}) is None
+
+
+def test_classify_assistant_with_dict_content() -> None:
+    # dict content not iterable as list — ignored
+    assert _classify_event({"role": "assistant", "content": {"type": "text"}}) is None
+
+
+def test_classify_thinking_alt_field() -> None:
+    # thinking event with 'content' instead of 'thinking'
+    evt = _classify_event({"type": "thinking", "content": "reason"})
+    assert evt is not None
+    assert evt.kind == "thinking"
+    assert evt.data == "reason"
+
+
+def test_classify_thinking_empty_content() -> None:
+    assert _classify_event({"type": "thinking", "thinking": ""}) is None
+
+
+def test_classify_thinking_non_string() -> None:
+    assert _classify_event({"type": "thinking", "thinking": 42}) is None  # type: ignore[dict-item]
+
+
+def test_classify_metadata_token_usage() -> None:
+    evt = _classify_event({"type": "token_usage", "tokens": 100})
+    assert evt is not None
+    assert evt.kind == "metadata"
+
+
+def test_classify_metadata_cost() -> None:
+    evt = _classify_event({"type": "cost", "usd": 0.01})
+    assert evt is not None
+    assert evt.kind == "metadata"
+
+
+# ── _classify_part edge cases ─────────────────────────────────────
+
+def test_part_non_dict() -> None:
+    assert _classify_part("string", 0.0) is None  # type: ignore[arg-type]
+
+
+def test_part_unknown_type() -> None:
+    assert _classify_part({"type": "image", "url": "x"}, 0.0) is None
+
+
+def test_part_empty_type() -> None:
+    assert _classify_part({"type": "", "text": "x"}, 0.0) is None
+
+
+def test_part_text_empty_string() -> None:
+    assert _classify_part({"type": "text", "text": ""}, 0.0) is None
+
+
+def test_part_text_non_string() -> None:
+    assert _classify_part({"type": "text", "text": 123}, 0.0) is None
+
+
+def test_part_think_alt_field() -> None:
+    evt = _classify_part({"type": "think", "text": "hmm"}, 0.0)
+    assert evt is not None
+    assert evt.kind == "thinking"
+
+
+def test_part_tool_use_no_name() -> None:
+    evt = _classify_part({"type": "tool_use", "input": {}}, 0.0)
+    assert evt is not None
+    assert evt.kind == "tool_call"
+    assert evt.tool_name == "unknown"
+
+
+# ── _tool_desc edge cases ─────────────────────────────────────────
+
+def test_tool_desc_write() -> None:
+    d = _tool_desc("write", {"path": "f.py", "lines": 42})
+    assert "✏️" in d
+    assert "42L" in d
+
+
+def test_tool_desc_glob() -> None:
+    d = _tool_desc("glob", {"pattern": "*.py"})
+    assert "🔎" in d
+
+
+def test_tool_desc_web_search() -> None:
+    d = _tool_desc("web_search", {"query": "kimi"})
+    assert "🔎 web:" in d
+
+
+def test_tool_desc_edit() -> None:
+    d = _tool_desc("edit", {"path": "file.py"})
+    assert "🔧" in d
+
+
+def test_tool_desc_empty_input() -> None:
+    d = _tool_desc("read", {})
+    assert "🔨" in d  # fallback
+
+
+def test_tool_desc_none_name() -> None:
+    d = _tool_desc("", {})
+    assert "🔨" in d
+
+
+# ── _build_args edge cases ────────────────────────────────────────
+
+def test_build_args_minimal() -> None:
+    args = _build_args("kimi", "s", "/tmp", "", "default")
+    assert "--print" in args
+    assert "stream-json" in args
+    assert "-S" in args and "s" in args
+    assert "--work-dir" in args and "/tmp" in args
+    assert "--agent" in args and "default" in args
+
+
+def test_build_args_with_model() -> None:
+    args = _build_args("kimi", "s", "/tmp", "kimi-for-coding", "okabe")
+    assert "--model" in args
+    idx = args.index("--model")
+    assert args[idx + 1] == "kimi-for-coding"
+
+
+def test_build_args_empty_model_omitted() -> None:
+    args = _build_args("kimi", "s", "/tmp", "", "default")
+    assert "--model" not in args
+
+
+# ── StreamEvent / StreamResult edge cases ────────────────────────
+
+def test_stream_event_all_fields_set() -> None:
+    e = StreamEvent(kind="tool_call", data="📖 x", tool_name="read", timestamp=1.5)
+    assert e.kind == "tool_call"
+    assert e.data == "📖 x"
+    assert e.tool_name == "read"
+    assert e.timestamp == 1.5
+
+
+def test_stream_event_defaults() -> None:
+    e = StreamEvent(kind="text", data="x")
+    assert e.tool_name == ""
+    assert e.timestamp == 0.0
+
+
+def test_stream_result_accumulates() -> None:
+    r = StreamResult(text="hello", exit_code=0, stderr="")
+    r.events.append(StreamEvent(kind="thinking", data="x"))
+    r.total_thinking_chars += 1
+    r.total_tool_calls += 1
+    assert len(r.events) == 1
+    assert r.total_thinking_chars == 1
+    assert r.total_tool_calls == 1
+
+
+# ── Restored from F-001 ──
 
 def test_classify_assistant_string() -> None:
     evt = _classify_event({"role": "assistant", "content": "Hello"})
     assert evt is not None
     assert evt.kind == "text"
     assert evt.data == "Hello"
+
 
 
 def test_classify_assistant_content_blocks() -> None:
@@ -29,11 +214,13 @@ def test_classify_assistant_content_blocks() -> None:
     assert "Hello from block" in evt.data
 
 
+
 def test_classify_thinking() -> None:
     evt = _classify_event({"type": "thinking", "thinking": "reasoning"})
     assert evt is not None
     assert evt.kind == "thinking"
     assert evt.data == "reasoning"
+
 
 
 def test_classify_thinking_in_content_block() -> None:
@@ -43,6 +230,7 @@ def test_classify_thinking_in_content_block() -> None:
     })
     assert evt is not None
     assert evt.kind == "thinking"
+
 
 
 def test_classify_tool_use_in_block() -> None:
@@ -56,19 +244,23 @@ def test_classify_tool_use_in_block() -> None:
     assert evt.tool_name == "read"
 
 
+
 def test_classify_metadata() -> None:
     evt = _classify_event({"type": "model", "model": "kimi-for-coding"})
     assert evt is not None
     assert evt.kind == "metadata"
 
 
+
 def test_classify_unknown_returns_none() -> None:
     assert _classify_event({"role": "system", "content": "..."}) is None
+
 
 
 def test_classify_non_dict() -> None:
     assert _classify_event("not a dict") is None  # type: ignore[arg-type]
     assert _classify_event(42) is None  # type: ignore[arg-type]
+
 
 
 def test_classify_empty_content_list() -> None:
@@ -78,12 +270,15 @@ def test_classify_empty_content_list() -> None:
 
 # ── _tool_desc ───────────────────────────────────────────────────
 
+
 def test_tool_desc_read() -> None:
     assert "📖" in _tool_desc("read", {"path": "foo.py"})
 
 
+
 def test_tool_desc_exec() -> None:
     assert "⚡" in _tool_desc("exec", {"command": "ls -la"})
+
 
 
 def test_tool_desc_unknown_fallback() -> None:
@@ -92,13 +287,16 @@ def test_tool_desc_unknown_fallback() -> None:
     assert "unknown_tool" in desc
 
 
+
 def test_tool_desc_keyerror_fallback() -> None:
     desc = _tool_desc("read", {})  # missing 'path' key
     assert "🔨" in desc
 
 
+
 def test_tool_desc_web_fetch() -> None:
     assert "🌐" in _tool_desc("web_fetch", {"url": "https://example.com"})
+
 
 
 def test_tool_desc_grep() -> None:
@@ -106,11 +304,6 @@ def test_tool_desc_grep() -> None:
 
 
 # ── StreamEvent / StreamResult ───────────────────────────────────
-
-def test_stream_event_defaults() -> None:
-    e = StreamEvent(kind="text", data="x")
-    assert e.tool_name == ""
-    assert e.timestamp == 0.0
 
 
 def test_stream_result_defaults() -> None:
@@ -122,6 +315,7 @@ def test_stream_result_defaults() -> None:
 
 # ── _build_args ──────────────────────────────────────────────────
 
+
 def test_build_args_no_model() -> None:
     args = _build_args("kimi", "sid1", "/tmp", "", "default")
     assert args[0] == "kimi"
@@ -129,8 +323,3 @@ def test_build_args_no_model() -> None:
     assert "-S" in args and "sid1" in args
     assert "--model" not in args
 
-
-def test_build_args_with_model() -> None:
-    args = _build_args("kimi", "sid1", "/tmp", "kimi-for-coding", "default")
-    assert "--model" in args
-    assert "kimi-for-coding" in args
