@@ -10,6 +10,7 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from src.commands import handle as handle_command
 from src.config import Config, load_config
+from src.health import record_turn, record_error, start_server
 from src.kimi_runner import KimiResult
 from src.state import State, load_state, save_state
 from src.telegram import InboundMessage, TelegramClient, is_authorized, parse_update
@@ -70,6 +71,9 @@ async def _process_message(
         text = _timeout_reply()
     elif code != 0:
         text = _error_reply(code, stderr)
+        record_error()
+    else:
+        record_turn()
 
     try:
         await tg.send_message(msg.chat_id, text or "(empty reply)")
@@ -133,9 +137,14 @@ def main() -> None:  # pragma: no cover
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, stop.set)
+        health_srv = await start_server()
         tg = TelegramClient(cfg.telegram.bot_token)
-        await run(cfg=cfg, state_path=sp, tg=tg, run_kimi_func=run_kimi,
-                  kimi_path=kp, stop_event=stop, use_streaming=True)
+        try:
+            await run(cfg=cfg, state_path=sp, tg=tg, run_kimi_func=run_kimi,
+                      kimi_path=kp, stop_event=stop, use_streaming=True)
+        finally:
+            health_srv.close()
+            await health_srv.wait_closed()
 
     asyncio.run(_go())
 
