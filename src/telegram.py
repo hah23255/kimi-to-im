@@ -1,4 +1,4 @@
-"""Telegram glue: pure helpers + async HTTP client with media support."""
+"""Telegram glue: pure helpers + async HTTP client with media + webhook support."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -18,7 +18,6 @@ class InboundMessage:
 
 
 def parse_update(update: dict[str, Any]) -> InboundMessage | None:
-    """Return InboundMessage for text, photo, or document message."""
     msg = update.get("message")
     if not isinstance(msg, dict):
         return None
@@ -34,10 +33,9 @@ def parse_update(update: dict[str, Any]) -> InboundMessage | None:
     uid_n = update.get("update_id")
     if not isinstance(cid, int) or not isinstance(uid, int) or not isinstance(uid_n, int):
         return None
-    return InboundMessage(
-        update_id=uid_n, chat_id=cid, user_id=uid, text=text,
-        photo=list(photo) if isinstance(photo, list) else None,
-        document=doc if isinstance(doc, dict) else None)
+    return InboundMessage(update_id=uid_n, chat_id=cid, user_id=uid, text=text,
+                          photo=list(photo) if isinstance(photo, list) else None,
+                          document=doc if isinstance(doc, dict) else None)
 
 
 def is_authorized(msg: InboundMessage, cfg: TelegramConfig) -> bool:
@@ -49,7 +47,6 @@ def is_authorized(msg: InboundMessage, cfg: TelegramConfig) -> bool:
 
 
 def chunk_message(text: str, max_len: int = 4096) -> list[str]:
-    """Split text into Telegram-sized chunks. Prefer newline boundaries."""
     if not text:
         return []
     if len(text) <= max_len:
@@ -71,7 +68,6 @@ def chunk_message(text: str, max_len: int = 4096) -> list[str]:
     return chunks
 
 
-# --- HTTP client -----------------------------------------------------
 import httpx
 
 
@@ -119,10 +115,8 @@ class TelegramClient:
             raise RuntimeError(f"sendChatAction failed: {data.get('description')}")
 
     async def get_file(self, file_id: str) -> bytes:
-        """Download a file from Telegram by file_id."""
         assert self._client is not None
-        r = await self._client.get(f"{self._base}/getFile",
-                                    params={"file_id": file_id})
+        r = await self._client.get(f"{self._base}/getFile", params={"file_id": file_id})
         data = r.json()
         if not data.get("ok"):
             raise RuntimeError(f"getFile failed: {data.get('description')}")
@@ -130,3 +124,16 @@ class TelegramClient:
         r2 = await self._client.get(
             f"https://api.telegram.org/file/bot{self._bot_token}/{file_path}")
         return r2.content
+
+    async def set_webhook(self, url: str, secret_token: str = "") -> dict[str, Any]:
+        assert self._client is not None
+        params: dict[str, Any] = {"url": url}
+        if secret_token:
+            params["secret_token"] = secret_token
+        r = await self._client.get(f"{self._base}/setWebhook", params=params)
+        return r.json()
+
+    async def delete_webhook(self) -> dict[str, Any]:
+        assert self._client is not None
+        r = await self._client.get(f"{self._base}/deleteWebhook")
+        return r.json()

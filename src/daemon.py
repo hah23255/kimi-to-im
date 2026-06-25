@@ -10,13 +10,14 @@ from typing import Any, Awaitable, Callable, Protocol
 
 from src.config import Config, load_config
 from src.commands import handle as handle_command
-from src.health import record_turn, record_error, start_server
+from src.health import record_turn, record_error, record_latency, start_server
 from src.kimi_runner import KimiResult
 from src.media import build_media_prompt
 from src.queue import TurnQueue
 from src.state import State, load_state, save_state
 from src.telegram import InboundMessage, TelegramClient, is_authorized, parse_update
 from src.turn import execute_streaming, execute_legacy, get_or_create_session
+from src.webhook import drain_webhook_updates
 
 LOG = logging.getLogger("kimi_telegram_bridge")
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config.json"
@@ -142,6 +143,9 @@ async def run(*, cfg: Config, state_path: Path, tg: _TelegramLike,
     async with tg:
         while not stop_event.is_set():
             updates = await _fetch_updates(tg, state.last_update_id + 1)
+            # Merge webhook updates
+            wh_updates = drain_webhook_updates()
+            updates.extend(wh_updates)
             for upd in updates:
                 state.last_update_id = max(state.last_update_id, int(upd.get("update_id", 0)))
                 m = parse_update(upd)
@@ -175,10 +179,19 @@ def main() -> None:
             loop.add_signal_handler(sig, stop.set)
         health_srv = await start_server()
         tg = TelegramClient(cfg.telegram.bot_token)
+        wh_ok = False
         try:
+            wh_url = os.environ.get("CTI_WEBHOOK_URL", "")
+            if wh_url:
+                wh_secret = cfg.telegram.bot_token[:20]
+                wh_res = await tg.set_webhook(wh_url, wh_secret)
+                wh_ok = wh_res.get("ok", False)
+                LOG.info("webhook setup: %s", "ok" if wh_ok else wh_res.get("description"))
             await run(cfg=cfg, state_path=sp, tg=tg, run_kimi_func=run_kimi,
                       kimi_path=kp, stop_event=stop, use_streaming=True)
         finally:
+            if wh_ok:
+                await tg.delete_webhook()
             health_srv.close()
             await health_srv.wait_closed()
 
