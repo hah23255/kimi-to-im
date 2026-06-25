@@ -155,6 +155,7 @@ async def _dispatch_stream_events(
     chat_id: int,
     events: list[StreamEvent],
     buffer: _EventBuffer,
+    thinking_enabled: bool = True,
 ) -> int:
     """Dispatch StreamEvents to Telegram, respecting flush intervals and caps.
 
@@ -163,7 +164,8 @@ async def _dispatch_stream_events(
     sent = 0
     for evt in events:
         if evt.kind == "thinking":
-            buffer.add_thinking(evt.data)
+            if thinking_enabled:
+                buffer.add_thinking(evt.data)
         elif evt.kind == "tool_call":
             buffer.add_tool(evt.data)
 
@@ -197,6 +199,7 @@ async def _run_streaming_turn(
     sid: str,
     cfg: Config,
     kimi_path: str,
+    state: State,
 ) -> tuple[StreamResult, float]:
     """Execute one turn using the streaming kimi executor with real-time event dispatch.
 
@@ -217,15 +220,17 @@ async def _run_streaming_turn(
             prompt=msg.text,
             session_id=sid,
             workdir=cfg.kimi.default_workdir,
-            model=cfg.kimi.model,
+            model=state.model_overrides.get(chat_id) or cfg.kimi.model,
             agent=cfg.kimi.agent,
             kimi_path=kimi_path,
             timeout=KIMI_TIMEOUT_S,
         )
         # Dispatch all accumulated events
-        await _dispatch_stream_events(tg, chat_id, result.events, buffer)
+        await _dispatch_stream_events(tg, chat_id, result.events, buffer,
+                                       state.thinking_enabled.get(chat_id, True))
         # Final flush
-        await _dispatch_stream_events(tg, chat_id, [], buffer)
+        await _dispatch_stream_events(tg, chat_id, [], buffer,
+                                       state.thinking_enabled.get(chat_id, True))
     finally:
         heartbeat_stop.set()
         heartbeat_task.cancel()
@@ -260,36 +265,114 @@ def _session_for(state: State, chat_id: int) -> str:
 
 
 async def _handle_bridge_command(
-    msg: InboundMessage, tg: "_TelegramLike"
+    msg: InboundMessage, tg: "_TelegramLike", state: State, cfg: Config,
 ) -> bool:
     """Handle built-in bridge commands. Returns True if a command was handled."""
     stripped = msg.text.strip()
-    if stripped == "/start":
-        await tg.send_message(
-            msg.chat_id,
+    parts = stripped.split(maxsplit=1)
+    cmd = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+    cid = msg.chat_id
+
+    # ── /start ──
+    if cmd == "/start":
+        await tg.send_message(cid,
             "👋 Welcome! I'm your Kimi bridge bot.\n\n"
-            "Send me any message and I'll forward it to Kimi. "
-            "Your conversation history is preserved per chat.\n\n"
-            "Commands:\n"
-            "/start – this message\n"
-            "/help – usage help\n"
-            "/reset – clear context (Kimi CLI native)\n"
-            "/clear – clear context (Kimi CLI native)",
+            "Send any message to chat with Kimi. History preserved per chat.\n\n"
+            "Commands: /help /info /thinking /model /compact /reset",
         )
         return True
-    if stripped == "/help":
-        await tg.send_message(
-            msg.chat_id,
-            "📖 Kimi Bridge Help\n\n"
-            "Send any text message to chat with Kimi. Replies may take a few "
-            "seconds up to several minutes depending on the task.\n\n"
-            "Native Kimi slash commands also work (e.g. /clear, /reset).\n\n"
-            "Tips:\n"
-            "• Session history is preserved automatically\n"
-            "• Long replies are split into multiple messages\n"
-            "• Timeout is 15 minutes per turn",
+
+    # ── /help ──
+    if cmd == "/help":
+        await tg.send_message(cid,
+            "📖 **Kimi Bridge Commands**\n\n"
+            "/start – welcome message\n"
+            "/help – this list\n"
+            "/info – session stats (model, tokens used)\n"
+            "/thinking on|off – toggle K2.7 reasoning visibility\n"
+            "/model <name> – switch LLM model for this chat\n"
+            "/compact – compress conversation context\n"
+            "/reset – clear context, start fresh\n\n"
+            "Native Kimi CLI commands also work (e.g. /clear).\n"
+            "Timeout: 15 min per turn. K2.7 Code • streaming",
         )
         return True
+
+    # ── /info ──
+    if cmd == "/info":
+        sid = state.chats.get(cid)
+        model = state.model_overrides.get(cid) or cfg.kimi.model or "kimi-for-coding"
+        thinking = "ON" if state.thinking_enabled.get(cid, True) else "OFF"
+        await tg.send_message(cid,
+            f"📊 **Session Info**\n\n"
+            f"Model: `{model}`\n"
+            f"Thinking visibility: {thinking}\n"
+            f"Session: `{sid[:12] if sid else 'none'}`{'…' if sid else ''}\n"
+            f"Kimi: v1.48.0 • K2.7 Code\n"
+            f"Bridge: Phase 2 • streaming",
+        )
+        return True
+
+    # ── /thinking ──
+    if cmd == "/thinking":
+        mode = args.strip().lower()
+        if mode in ("on", "true", "1"):
+            state.thinking_enabled[cid] = True
+            await tg.send_message(cid, "💭 Thinking visibility: **ON**")
+        elif mode in ("off", "false", "0"):
+            state.thinking_enabled[cid] = False
+            await tg.send_message(cid, "💭 Thinking visibility: **OFF**")
+        else:
+            current = state.thinking_enabled.get(cid, True)
+            await tg.send_message(cid, f"💭 Thinking visibility: **{'ON' if current else 'OFF'}**\nUsage: /thinking on|off")
+        return True
+
+    # ── /model ──
+    if cmd == "/model":
+        if not args.strip():
+            model = state.model_overrides.get(cid) or cfg.kimi.model or "kimi-for-coding"
+            await tg.send_message(cid, f"Current model: `{model}`\nUsage: /model <name>")
+        else:
+            candidate = args.strip()
+            state.model_overrides[cid] = candidate
+            await tg.send_message(cid, f"✅ Model set to `{candidate}` for this chat.")
+        return True
+
+    # ── /compact ──
+    if cmd == "/compact":
+        sid = state.chats.get(cid)
+        if not sid:
+            await tg.send_message(cid, "No active session to compact.")
+            return True
+        kp = os.environ.get("KIMI_BIN", "kimi")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                kp, "compact", "-S", sid,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            out = stdout.decode(errors="replace").strip()
+            if proc.returncode == 0:
+                await tg.send_message(cid, f"🗜️ {out or 'Compact complete.'}")
+            else:
+                err = stderr.decode(errors="replace")[:300]
+                await tg.send_message(cid, f"⚠️ Compact failed: {err}")
+        except asyncio.TimeoutError:
+            await tg.send_message(cid, "⏱️ Compact timed out.")
+        except Exception as exc:
+            await tg.send_message(cid, f"⚠️ Compact error: {exc}")
+        return True
+
+    # ── /reset ──
+    if cmd == "/reset":
+        if cid in state.chats:
+            del state.chats[cid]
+            await tg.send_message(cid, "♻️ Session cleared. New conversation started.")
+        else:
+            await tg.send_message(cid, "No active session to reset.")
+        return True
+
     return False
 
 
@@ -343,7 +426,7 @@ async def run(
                     continue
 
                 # ── bridge-level commands ──
-                if await _handle_bridge_command(msg, tg):
+                if await _handle_bridge_command(msg, tg, state, cfg):
                     continue
 
                 # ── kimi turn ──
@@ -357,7 +440,7 @@ async def run(
 
                 if use_streaming:
                     result, elapsed_ms = await _run_streaming_turn(
-                        tg, msg.chat_id, msg, sid, cfg, kimi_path
+                        tg, msg.chat_id, msg, sid, cfg, kimi_path, state
                     )
                     exit_code = result.exit_code
                     reply = result.text
