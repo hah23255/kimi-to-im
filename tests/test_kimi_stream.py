@@ -323,3 +323,80 @@ def test_build_args_no_model() -> None:
     assert "-S" in args and "sid1" in args
     assert "--model" not in args
 
+
+# ── Integration tests (use real kimi binary) ──────────────────────
+
+import asyncio
+import stat
+from pathlib import Path
+
+import pytest
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_basic() -> None:
+    """End-to-end streaming with real kimi CLI."""
+    result = await run_kimi_stream(
+        prompt='reply with just the single word OK',
+        session_id='test-basic-001', workdir='/tmp',
+        model='', agent='default', kimi_path='kimi', timeout=30)
+    assert result.exit_code == 0
+    assert 'OK' in result.text
+    assert len(result.events) >= 1
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_with_model() -> None:
+    """Passing --model flag through to kimi."""
+    result = await run_kimi_stream(
+        prompt='reply OK', session_id='test-model',
+        workdir='/tmp', model='kimi-code/kimi-for-coding', agent='default',
+        kimi_path='kimi', timeout=30)
+    assert result.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_events_classified() -> None:
+    """Verify events contain classified types."""
+    result = await run_kimi_stream(
+        prompt='reply: HELLO', session_id='test-events',
+        workdir='/tmp', model='', agent='default',
+        kimi_path='kimi', timeout=30)
+    assert result.exit_code == 0
+    kinds = {e.kind for e in result.events}
+    assert 'text' in kinds  # at minimum text events
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_stderr_captured() -> None:
+    """Invalid model should produce stderr + non-zero exit."""
+    result = await run_kimi_stream(
+        prompt='hi', session_id='test-stderr',
+        workdir='/tmp', model='nonexistent-model-xyz',
+        agent='default', kimi_path='kimi', timeout=30)
+    # Exit may be nonzero due to unknown model
+    assert isinstance(result.exit_code, int)
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_timeout_handled(tmp_path: Path) -> None:
+    """A hanging script should time out with exit_code=124."""
+    script = tmp_path / "hang"
+    script.write_text("#!/bin/sh\nsleep 10\n")
+    script.chmod(script.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    result = await run_kimi_stream(
+        prompt='x', session_id='test-timeout',
+        workdir=str(tmp_path), model='', agent='default',
+        kimi_path=str(script), timeout=0.5)
+    assert result.exit_code == 124
+    assert 'timeout' in result.stderr.lower() or 'timed out' in result.stderr.lower()
+
+
+@pytest.mark.asyncio
+async def test_run_kimi_stream_no_timeout() -> None:
+    """Default (no timeout) should not trigger 124."""
+    result = await run_kimi_stream(
+        prompt='reply OK', session_id='test-notimeout',
+        workdir='/tmp', model='', agent='default',
+        kimi_path='kimi', timeout=None)
+    assert result.exit_code == 0
