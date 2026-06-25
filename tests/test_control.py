@@ -118,7 +118,7 @@ def test_setup_reports_missing_kimi_binary(
         monkeypatch.setattr(httpx, "get", lambda *a, **kw: _FakeResp())
 
         result = control_mod.handle({"action": "setup"})
-        assert "kimi CLI not found on PATH" in result["output"]
+        assert "kimi CLI not on PATH" in result["output"]
         # ok should be False because at least one ✗ line is present
         assert result["ok"] is False
     finally:

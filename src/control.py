@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 SERVICE = "kimi-telegram-bridge.service"
 LOG_FILE = Path.home() / ".kimi" / "bridge" / "logs" / "bridge.log"
 
@@ -15,36 +14,26 @@ LOG_FILE = Path.home() / ".kimi" / "bridge" / "logs" / "bridge.log"
 def _systemctl(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["systemctl", "--user", *args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+        capture_output=True, text=True, check=False)
 
 
 def _action_start() -> dict[str, Any]:
     res = _systemctl("start", SERVICE)
     ok = res.returncode == 0
-    return {
-        "ok": ok,
-        "output": (res.stdout + res.stderr).strip() or ("started" if ok else "failed"),
-    }
+    return {"ok": ok,
+            "output": (res.stdout + res.stderr).strip() or ("started" if ok else "failed")}
 
 
 def _action_stop() -> dict[str, Any]:
     res = _systemctl("stop", SERVICE)
-    return {
-        "ok": res.returncode == 0,
-        "output": (res.stdout + res.stderr).strip() or "stopped",
-    }
+    return {"ok": res.returncode == 0,
+            "output": (res.stdout + res.stderr).strip() or "stopped"}
 
 
 def _action_status() -> dict[str, Any]:
     res = _systemctl("status", SERVICE, "--no-pager")
-    # systemctl status exits 3 when service is inactive; that's still useful info.
-    return {
-        "ok": res.returncode in (0, 3),
-        "output": (res.stdout + res.stderr).strip(),
-    }
+    return {"ok": res.returncode in (0, 3),
+            "output": (res.stdout + res.stderr).strip()}
 
 
 def _action_logs(lines: int = 50) -> dict[str, Any]:
@@ -53,95 +42,83 @@ def _action_logs(lines: int = 50) -> dict[str, Any]:
         return {"ok": True, "output": "\n".join(text[-lines:])}
     res = subprocess.run(
         ["journalctl", "--user", "-u", SERVICE, "-n", str(lines), "--no-pager"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    return {
-        "ok": res.returncode == 0,
-        "output": res.stdout.strip() or res.stderr.strip(),
-    }
+        capture_output=True, text=True, check=False)
+    return {"ok": res.returncode == 0,
+            "output": res.stdout.strip() or res.stderr.strip()}
 
 
-def _action_setup() -> dict[str, Any]:
-    """Validate config + tools. Returns a human-readable report."""
+def _cfg_path() -> Path:
+    return Path(__file__).resolve().parent.parent / "config.json"
+
+
+def _check_config(report: list[str]):
     try:
         from src.config import load_config
+        return load_config(_cfg_path())
     except Exception as err:
-        return {"ok": False, "output": f"could not import config loader: {err}"}
+        report.append(f"✗ config error: {err}")
+        return None
 
-    cfg_path = Path(__file__).resolve().parent.parent / "config.json"
-    report: list[str] = [f"config path: {cfg_path}"]
 
+def _check_kimi(report: list[str]) -> None:
     try:
-        cfg = load_config(cfg_path)
-        report.append("✓ config.json loaded")
-    except Exception as err:
-        return {"ok": False, "output": "\n".join([*report, f"✗ config error: {err}"])}
-
-    try:
-        kimi = subprocess.run(
-            ["kimi", "--version"], capture_output=True, text=True, check=False
-        )
-        if kimi.returncode == 0:
-            report.append(f"✓ kimi CLI found: {kimi.stdout.strip()}")
+        k = subprocess.run(["kimi", "--version"], capture_output=True, text=True, check=False)
+        if k.returncode == 0:
+            report.append(f"✓ kimi CLI: {k.stdout.strip()}")
         else:
-            report.append(f"✗ kimi --version failed: {kimi.stderr.strip()}")
+            report.append(f"✗ kimi --version failed: {k.stderr.strip()}")
     except FileNotFoundError:
-        report.append("✗ kimi CLI not found on PATH — is it installed?")
+        report.append("✗ kimi CLI not on PATH")
 
+
+def _check_telegram(report: list[str], bot_token: str) -> None:
     try:
         import httpx
-
-        r = httpx.get(
-            f"https://api.telegram.org/bot{cfg.telegram.bot_token}/getMe",
-            timeout=10,
-        )
-        data = r.json()
-        if data.get("ok"):
-            user = data["result"]
-            report.append(f"✓ telegram token valid (bot @{user.get('username')})")
+        r = httpx.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10)
+        d = r.json()
+        if d.get("ok"):
+            report.append(f"✓ telegram token valid (bot @{d['result'].get('username')})")
         else:
-            report.append(f"✗ telegram token rejected: {data.get('description')}")
+            report.append(f"✗ telegram token rejected: {d.get('description')}")
     except Exception as err:
         report.append(f"✗ telegram check failed: {err}")
 
+
+def _action_setup() -> dict[str, Any]:
+    report = [f"config: {_cfg_path()}"]
+    cfg = _check_config(report)
+    if cfg is None:
+        return {"ok": False, "output": "\n".join(report)}
+    _check_kimi(report)
+    _check_telegram(report, cfg.telegram.bot_token)
     ok = not any(line.startswith("✗") for line in report)
     return {"ok": ok, "output": "\n".join(report)}
 
 
 def handle(payload: dict[str, Any]) -> dict[str, Any]:
     action = payload.get("action")
-    if action == "start":
-        return _action_start()
-    if action == "stop":
-        return _action_stop()
-    if action == "status":
-        return _action_status()
+    handlers = {"start": _action_start, "stop": _action_stop,
+                "status": _action_status, "setup": _action_setup}
     if action == "logs":
         return _action_logs(int(payload.get("lines") or 50))
-    if action == "setup":
-        return _action_setup()
+    fn = handlers.get(action)
+    if fn:
+        return fn()
     return {"ok": False, "output": f"unknown action: {action!r}"}
 
 
-def main() -> None:  # pragma: no cover — IO wiring only
-    # Defense-in-depth: if anyone ever sets the root logger to INFO before
-    # calling main(), httpx would log the full Telegram URL (which embeds the
-    # bot token) on every request inside _action_setup's getMe call.
+def main() -> None:  # pragma: no cover
     import logging
-
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
-
     raw = sys.stdin.read()
     try:
         payload = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError as err:
-        print(json.dumps({"ok": False, "output": f"invalid JSON on stdin: {err}"}))
+        print(json.dumps({"ok": False, "output": f"invalid JSON: {err}"}))
         sys.exit(1)
     print(json.dumps(handle(payload)))
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()

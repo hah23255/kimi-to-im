@@ -1,4 +1,4 @@
-"""Loader and validator for ~/.kimi/plugins/telegram-bridge/config.json."""
+"""Loader and validator for config.json."""
 from __future__ import annotations
 
 import json
@@ -8,7 +8,7 @@ from typing import Any
 
 
 class ConfigError(Exception):
-    """Raised when config.json is missing, malformed, or fails validation."""
+    """config.json missing, malformed, or invalid."""
 
 
 @dataclass(frozen=True)
@@ -31,44 +31,41 @@ class Config:
     kimi: KimiConfig
 
 
-def load_config(path: Path) -> Config:
+def _load_raw(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"config not found at {path}")
-
     try:
-        raw: dict[str, Any] = json.loads(path.read_text())
+        return json.loads(path.read_text())
     except json.JSONDecodeError as exc:
         raise ConfigError(f"invalid JSON in {path}: {exc}") from exc
 
-    tg_raw = raw.get("telegram") or {}
-    bot_token = tg_raw.get("bot_token") or ""
-    if not isinstance(bot_token, str) or not bot_token:
+
+def _parse_telegram(raw: dict) -> TelegramConfig:
+    tg = raw.get("telegram") or {}
+    token = tg.get("bot_token") or ""
+    if not isinstance(token, str) or not token:
         raise ConfigError("telegram.bot_token must be a non-empty string")
+    users = tg.get("allowed_user_ids") or []
+    if not isinstance(users, list) or not users:
+        raise ConfigError("telegram.allowed_user_ids must be non-empty")
+    if not all(isinstance(x, int) and not isinstance(x, bool) for x in users):
+        raise ConfigError("allowed_user_ids entries must be integers")
+    chats = tg.get("allowed_chat_ids") or []
+    if not isinstance(chats, list) or not all(
+        isinstance(x, int) and not isinstance(x, bool) for x in chats):
+        raise ConfigError("allowed_chat_ids must be a list of integers")
+    return TelegramConfig(bot_token=token, allowed_user_ids=list(users),
+                          allowed_chat_ids=list(chats))
 
-    allowed_user_ids = tg_raw.get("allowed_user_ids") or []
-    if not isinstance(allowed_user_ids, list) or not allowed_user_ids:
-        raise ConfigError(
-            "telegram.allowed_user_ids must be a non-empty list (default-deny)"
-        )
-    if not all(isinstance(x, int) and not isinstance(x, bool) for x in allowed_user_ids):
-        raise ConfigError("telegram.allowed_user_ids entries must be integers")
 
-    allowed_chat_ids = tg_raw.get("allowed_chat_ids") or []
-    if not isinstance(allowed_chat_ids, list) or not all(
-        isinstance(x, int) and not isinstance(x, bool) for x in allowed_chat_ids
-    ):
-        raise ConfigError("telegram.allowed_chat_ids must be a list of integers")
+def _parse_kimi(raw: dict) -> KimiConfig:
+    k = raw.get("kimi") or {}
+    return KimiConfig(
+        default_workdir=str(k.get("default_workdir") or ""),
+        model=str(k.get("model") or ""),
+        agent=str(k.get("agent") or "default"))
 
-    kimi_raw = raw.get("kimi") or {}
-    return Config(
-        telegram=TelegramConfig(
-            bot_token=bot_token,
-            allowed_user_ids=list(allowed_user_ids),
-            allowed_chat_ids=list(allowed_chat_ids),
-        ),
-        kimi=KimiConfig(
-            default_workdir=str(kimi_raw.get("default_workdir") or ""),
-            model=str(kimi_raw.get("model") or ""),
-            agent=str(kimi_raw.get("agent") or "default"),
-        ),
-    )
+
+def load_config(path: Path) -> Config:
+    raw = _load_raw(path)
+    return Config(telegram=_parse_telegram(raw), kimi=_parse_kimi(raw))

@@ -24,34 +24,40 @@ async def execute_streaming(
     tg: "_TelegramLike", chat_id: int, msg: "InboundMessage",
     sid: str, cfg: "Config", kimi_path: str, state: "State",
 ) -> tuple[str, int]:
-    """Run one kimi turn with real-time event dispatch. Returns (reply_text, exit_code)."""
+    """Run kimi turn with real-time event dispatch."""
     buf = EventBuffer()
     hb_stop = asyncio.Event()
     hb_task = asyncio.create_task(heartbeat(tg, chat_id, hb_stop))
     turn_start = time.perf_counter()
-
     try:
-        result = await run_kimi_stream(
-            prompt=msg.text, session_id=sid,
-            workdir=cfg.kimi.default_workdir,
-            model=state.model_overrides.get(chat_id) or cfg.kimi.model,
-            agent=cfg.kimi.agent, kimi_path=kimi_path, timeout=KIMI_TIMEOUT_S)
+        result = await _invoke_kimi(msg, sid, cfg, kimi_path, state)
         te = state.thinking_enabled.get(chat_id, True)
         await dispatch_events(tg, chat_id, result.events, buf, te)
-        await dispatch_events(tg, chat_id, [], buf, te)  # final flush
+        await dispatch_events(tg, chat_id, [], buf, te)
     finally:
-        hb_stop.set()
-        hb_task.cancel()
-        try:
-            await hb_task
-        except (asyncio.CancelledError, Exception):
-            pass
-
+        _cancel_heartbeat(hb_stop, hb_task)
     elapsed = int((time.perf_counter() - turn_start) * 1000)
     LOG.info("turn chat=%d session=%s exit=%d ms=%d reply=%d thinking=%d tools=%d",
              chat_id, sid[:8], result.exit_code, elapsed,
              len(result.text or ""), result.total_thinking_chars, result.total_tool_calls)
     return result.text or "", result.exit_code
+
+
+async def _invoke_kimi(
+    msg: "InboundMessage", sid: str, cfg: "Config",
+    kimi_path: str, state: "State",
+) -> StreamResult:
+    model = state.model_overrides.get(msg.chat_id) or cfg.kimi.model
+    return await run_kimi_stream(
+        prompt=msg.text, session_id=sid,
+        workdir=cfg.kimi.default_workdir,
+        model=model, agent=cfg.kimi.agent,
+        kimi_path=kimi_path, timeout=KIMI_TIMEOUT_S)
+
+
+def _cancel_heartbeat(hb_stop: asyncio.Event, hb_task: asyncio.Task) -> None:
+    hb_stop.set()
+    hb_task.cancel()
 
 
 async def execute_legacy(
