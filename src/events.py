@@ -17,10 +17,9 @@ EVENT_FLUSH_INTERVAL = 3.0
 MAX_THINKING_CHARS_PER_TURN = 8_000
 MAX_TOOL_CHARS_PER_TURN = 4_000
 TYPING_REFRESH_S = 4.0
-PROGRESS_NOTICES = (
-    (250.0, "🤔 Still thinking… (over 4 min; timeout at 15 min)"),
-    (600.0, "🤔 Still thinking… (over 10 min; timeout at 15 min)"),
-)
+THINKING_NOTICE_SHORT = (250.0, "🤔 Still thinking… (over 4 min; timeout at 15 min)")
+THINKING_NOTICE_LONG = (600.0, "🤔 Still thinking… (over 10 min; timeout at 15 min)")
+PROGRESS_NOTICES = (THINKING_NOTICE_SHORT, THINKING_NOTICE_LONG)
 
 
 @dataclass
@@ -106,7 +105,7 @@ async def heartbeat(
             try:
                 await tg.send_chat_action(chat_id, "typing")
             except Exception:
-                pass
+                LOG.debug("heartbeat sendChatAction failed")
             elapsed = time.perf_counter() - start
             for after_s, msg in PROGRESS_NOTICES:
                 if elapsed >= after_s and after_s not in notices_sent:
@@ -114,7 +113,7 @@ async def heartbeat(
                     try:
                         await tg.send_message(chat_id, msg)
                     except Exception:
-                        pass
+                        LOG.debug("heartbeat sendMessage failed")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=TYPING_REFRESH_S)
             except asyncio.TimeoutError:

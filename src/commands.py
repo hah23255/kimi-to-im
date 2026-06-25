@@ -5,6 +5,8 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
+DEFAULT_MODEL = "kimi-for-coding"
+
 if TYPE_CHECKING:
     from src.config import Config
     from src.daemon import _TelegramLike
@@ -60,7 +62,7 @@ async def _cmd_help(tg: "_TelegramLike", cid: int, _a: str, _s: "State", _c: "Co
 
 async def _cmd_info(tg: "_TelegramLike", cid: int, _a: str, s: "State", c: "Config") -> None:
     sid = s.chats.get(cid)
-    model = s.model_overrides.get(cid) or c.kimi.model or "kimi-for-coding"
+    model = s.model_overrides.get(cid) or c.kimi.model or DEFAULT_MODEL
     thinking = "ON" if s.thinking_enabled.get(cid, True) else "OFF"
     await tg.send_message(cid,
         f"📊 **Session**\nModel: `{model}`\nThinking: {thinking}\n"
@@ -82,7 +84,7 @@ async def _cmd_thinking(tg: "_TelegramLike", cid: int, args: str, s: "State", _c
 
 async def _cmd_model(tg: "_TelegramLike", cid: int, args: str, s: "State", c: "Config") -> None:
     if not args.strip():
-        m = s.model_overrides.get(cid) or c.kimi.model or "kimi-for-coding"
+        m = s.model_overrides.get(cid) or c.kimi.model or DEFAULT_MODEL
         await tg.send_message(cid, f"Model: `{m}`\n/model <name>")
         return
     s.model_overrides[cid] = args.strip()

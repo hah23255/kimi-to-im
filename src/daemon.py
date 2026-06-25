@@ -75,7 +75,7 @@ async def _run_turn(
     try:
         await tg.send_chat_action(msg.chat_id, "typing")
     except Exception:
-        pass
+        LOG.debug("sendChatAction pre-turn failed")
     sid = get_or_create_session(state, msg.chat_id)
     save_state(DEFAULT_STATE_PATH, state)
     text, code = await _execute_turn(

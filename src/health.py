@@ -5,6 +5,8 @@ import asyncio
 import json
 import time
 
+HEALTH_HOST = "127.0.0.1"
+HEALTH_PORT = 9099
 _started = time.time()
 _turns_total = 0
 _errors_total = 0
@@ -47,5 +49,5 @@ async def _handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -
     writer.close()
 
 
-async def start_server(host: str = "127.0.0.1", port: int = 9099) -> asyncio.AbstractServer:
+async def start_server(host: str = HEALTH_HOST, port: int = HEALTH_PORT) -> asyncio.AbstractServer:
     return await asyncio.start_server(_handler, host, port)
