@@ -70,10 +70,14 @@ def _cancel_heartbeat(hb_stop: asyncio.Event, hb_task: asyncio.Task) -> None:
 
 async def execute_legacy(
     tg: "_TelegramLike", chat_id: int, msg: "InboundMessage",
-    sid: str, cfg: "Config", kimi_path: str,
+    sid: str | None, cfg: "Config", kimi_path: str,
     run_kimi_func, state: "State",
 ) -> tuple[str, int, str]:
     """Run one turn via legacy synchronous kimi. For tests and fallback."""
+    if not sid:
+        import uuid
+        sid = uuid.uuid4().hex
+        state.chats[chat_id] = sid
     hb_stop = asyncio.Event()
     hb_task = asyncio.create_task(heartbeat(tg, chat_id, hb_stop))
     turn_start = time.perf_counter()
