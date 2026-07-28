@@ -149,11 +149,10 @@ def test_tool_desc_none_name() -> None:
 
 def test_build_args_minimal() -> None:
     args = _build_args("kimi", "s", "/tmp", "", "default")
-    assert "--print" in args
+    assert "-p" in args
     assert "stream-json" in args
     assert "-S" in args and "s" in args
-    assert "--work-dir" in args and "/tmp" in args
-    assert "--agent" in args and "default" in args
+    assert "--add-dir" in args and "/tmp" in args
 
 
 def test_build_args_with_model() -> None:
@@ -339,7 +338,7 @@ async def test_run_kimi_stream_basic() -> None:
     result = await run_kimi_stream(
         prompt='reply with just the single word OK',
         session_id='test-basic-001', workdir='/tmp',
-        model='', agent='default', kimi_path='kimi', timeout=30)
+        model='', agent='default', kimi_path='kimi', idle_timeout=30)
     assert result.exit_code == 0
     assert 'OK' in result.text
     assert len(result.events) >= 1
@@ -351,7 +350,7 @@ async def test_run_kimi_stream_with_model() -> None:
     result = await run_kimi_stream(
         prompt='reply OK', session_id='test-model',
         workdir='/tmp', model='kimi-code/kimi-for-coding', agent='default',
-        kimi_path='kimi', timeout=30)
+        kimi_path='kimi', idle_timeout=30)
     assert result.exit_code == 0
 
 
@@ -361,7 +360,7 @@ async def test_run_kimi_stream_events_classified() -> None:
     result = await run_kimi_stream(
         prompt='reply: HELLO', session_id='test-events',
         workdir='/tmp', model='', agent='default',
-        kimi_path='kimi', timeout=30)
+        kimi_path='kimi', idle_timeout=30)
     assert result.exit_code == 0
     kinds = {e.kind for e in result.events}
     assert 'text' in kinds  # at minimum text events
@@ -373,7 +372,7 @@ async def test_run_kimi_stream_stderr_captured() -> None:
     result = await run_kimi_stream(
         prompt='hi', session_id='test-stderr',
         workdir='/tmp', model='nonexistent-model-xyz',
-        agent='default', kimi_path='kimi', timeout=30)
+        agent='default', kimi_path='kimi', idle_timeout=30)
     # Exit may be nonzero due to unknown model
     assert isinstance(result.exit_code, int)
 
@@ -387,16 +386,16 @@ async def test_run_kimi_stream_timeout_handled(tmp_path: Path) -> None:
     result = await run_kimi_stream(
         prompt='x', session_id='test-timeout',
         workdir=str(tmp_path), model='', agent='default',
-        kimi_path=str(script), timeout=0.5)
+        kimi_path=str(script), idle_timeout=0.5)
     assert result.exit_code == 124
     assert 'timeout' in result.stderr.lower() or 'timed out' in result.stderr.lower()
 
 
 @pytest.mark.asyncio
 async def test_run_kimi_stream_no_timeout() -> None:
-    """Default (no timeout) should not trigger 124."""
+    """Default should run without 124."""
     result = await run_kimi_stream(
         prompt='reply OK', session_id='test-notimeout',
         workdir='/tmp', model='', agent='default',
-        kimi_path='kimi', timeout=None)
+        kimi_path='kimi')
     assert result.exit_code == 0

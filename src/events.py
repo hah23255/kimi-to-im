@@ -17,8 +17,8 @@ EVENT_FLUSH_INTERVAL = 3.0
 MAX_THINKING_CHARS_PER_TURN = 8_000
 MAX_TOOL_CHARS_PER_TURN = 4_000
 TYPING_REFRESH_S = 4.0
-THINKING_NOTICE_SHORT = (250.0, "🤔 Still thinking… (over 4 min; timeout at 15 min)")
-THINKING_NOTICE_LONG = (600.0, "🤔 Still thinking… (over 10 min; timeout at 15 min)")
+THINKING_NOTICE_SHORT = (180.0, "🤔 Still processing… (3 minutes elapsed)")
+THINKING_NOTICE_LONG = (450.0, "⚡ Still working on complex task… (7.5 minutes elapsed)")
 PROGRESS_NOTICES = (THINKING_NOTICE_SHORT, THINKING_NOTICE_LONG)
 
 

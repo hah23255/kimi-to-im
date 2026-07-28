@@ -39,11 +39,10 @@ def parse_stream_json(stdout: str) -> str:
     return "".join(chunks)
 
 
-def _run_sync(args: list[str], prompt: str, timeout: float | None = None) -> KimiResult:
+def _run_sync(args: list[str], timeout: float | None = None) -> KimiResult:
     """Synchronous subprocess worker. Called via asyncio.to_thread."""
     try:
-        p = subprocess.run(args, input=prompt.encode(),
-                           capture_output=True, check=False, timeout=timeout)
+        p = subprocess.run(args, capture_output=True, check=False, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         stderr = ""
         if exc.stderr is not None:
@@ -56,12 +55,16 @@ def _run_sync(args: list[str], prompt: str, timeout: float | None = None) -> Kim
 
 
 async def run_kimi(
-    prompt: str, *, session_id: str, workdir: str,
+    prompt: str, *, session_id: str | None = None, workdir: str,
     model: str, agent: str, kimi_path: str, timeout: float | None = None,
 ) -> KimiResult:
-    """Run kimi CLI via thread-pooled subprocess (synchronous path)."""
-    args = [kimi_path, "--print", "--output-format", "stream-json",
-            "-S", session_id, "--work-dir", workdir, "--agent", agent]
+    """Run kimi-code CLI via thread-pooled subprocess (synchronous path).
+    agent is accepted but silently ignored (kimi-code ≥0.22 has no --agent).
+    session_id=None → fresh session."""
+    args = [kimi_path, "-p", prompt, "--output-format", "stream-json",
+            "--add-dir", workdir]
+    if session_id:
+        args.extend(["-S", session_id])
     if model:
         args.extend(["--model", model])
-    return await asyncio.to_thread(_run_sync, args, prompt, timeout)
+    return await asyncio.to_thread(_run_sync, args, timeout)
