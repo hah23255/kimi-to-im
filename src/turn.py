@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 LOG = logging.getLogger("kimi_telegram_bridge")
 IDLE_TIMEOUT_S = 300.0   # 5 min inactivity limit (resets on stdout/stderr/tool activity)
 MAX_TIMEOUT_S = 3600.0   # 60 min maximum runtime ceiling
+KIMI_TIMEOUT_S = IDLE_TIMEOUT_S
 
 
 async def execute_streaming(

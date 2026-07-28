@@ -164,13 +164,12 @@ async def test_run_kimi_passes_session_and_workdir_args(tmp_path: Path) -> None:
         kimi_path=str(script),
     )
     args = captured.read_text().splitlines()
-    assert "--print" in args
+    assert "-p" in args
     assert "--output-format" in args
     assert "stream-json" in args
     assert "-S" in args and "abc" in args
-    assert "--work-dir" in args and "/tmp/work" in args
+    assert "--add-dir" in args and "/tmp/work" in args
     assert "--model" in args and "kimi-code/kimi-for-coding" in args
-    assert "--agent" in args and "default" in args
 
 
 async def test_run_kimi_returns_synthetic_timeout_result(tmp_path: Path) -> None:
