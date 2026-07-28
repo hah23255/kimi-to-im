@@ -98,6 +98,13 @@ def _classify_part(part: dict, ts: float) -> StreamEvent | None:
     return None
 
 
+def _kill_proc(proc: asyncio.subprocess.Process) -> None:
+    try:
+        proc.terminate()
+    except ProcessLookupError:
+        return
+
+
 async def _drain_stdout(
     proc: asyncio.subprocess.Process,
     result: StreamResult,

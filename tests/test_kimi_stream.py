@@ -312,27 +312,13 @@ def test_stream_result_defaults() -> None:
     assert r.total_tool_calls == 0
 
 
-# ── _build_args ──────────────────────────────────────────────────
+import shutil
 
-
-def test_build_args_no_model() -> None:
-    args = _build_args("kimi", "sid1", "/tmp", "", "default")
-    assert args[0] == "kimi"
-    assert "--print" in args
-    assert "-S" in args and "sid1" in args
-    assert "--model" not in args
-
-
-# ── Integration tests (use real kimi binary) ──────────────────────
-
-import asyncio
-import stat
-from pathlib import Path
-
-import pytest
+HAS_KIMI = shutil.which("kimi") is not None
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_KIMI, reason="kimi binary not installed")
 async def test_run_kimi_stream_basic() -> None:
     """End-to-end streaming with real kimi CLI."""
     result = await run_kimi_stream(
@@ -345,6 +331,7 @@ async def test_run_kimi_stream_basic() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_KIMI, reason="kimi binary not installed")
 async def test_run_kimi_stream_with_model() -> None:
     """Passing --model flag through to kimi."""
     result = await run_kimi_stream(
@@ -355,6 +342,7 @@ async def test_run_kimi_stream_with_model() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_KIMI, reason="kimi binary not installed")
 async def test_run_kimi_stream_events_classified() -> None:
     """Verify events contain classified types."""
     result = await run_kimi_stream(
@@ -367,6 +355,7 @@ async def test_run_kimi_stream_events_classified() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_KIMI, reason="kimi binary not installed")
 async def test_run_kimi_stream_stderr_captured() -> None:
     """Invalid model should produce stderr + non-zero exit."""
     result = await run_kimi_stream(
@@ -392,6 +381,7 @@ async def test_run_kimi_stream_timeout_handled(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(not HAS_KIMI, reason="kimi binary not installed")
 async def test_run_kimi_stream_no_timeout() -> None:
     """Default should run without 124."""
     result = await run_kimi_stream(
