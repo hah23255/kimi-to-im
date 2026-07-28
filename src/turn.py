@@ -91,8 +91,9 @@ async def execute_legacy(
         except (asyncio.CancelledError, Exception):
             pass
     elapsed = int((time.perf_counter() - turn_start) * 1000)
+    effective_sid = (sid or "none")[:8]
     LOG.info("turn chat=%d session=%s exit=%d ms=%d reply=%d",
-             chat_id, sid[:8], result.exit_code, elapsed, len(result.text or ""))
+             chat_id, effective_sid, result.exit_code, elapsed, len(result.text or ""))
     return result.text or "", result.exit_code, result.stderr or ""
 
 

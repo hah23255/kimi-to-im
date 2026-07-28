@@ -43,7 +43,7 @@ class TurnQueue:
         cid = msg.chat_id
 
         # Owner bypass
-        if cid == self.owner_chat_id:
+        if cid == self.owner_chat_id or msg.user_id == self.owner_chat_id:
             return None
 
         # Already active — enqueue

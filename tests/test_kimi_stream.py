@@ -147,8 +147,11 @@ def test_tool_desc_none_name() -> None:
 
 # ── _build_args edge cases ────────────────────────────────────────
 
+import stat
+
+
 def test_build_args_minimal() -> None:
-    args = _build_args("kimi", "s", "/tmp", "", "default")
+    args = _build_args("kimi", "prompt_text", "s", "/tmp", "")
     assert "-p" in args
     assert "stream-json" in args
     assert "-S" in args and "s" in args
@@ -156,14 +159,14 @@ def test_build_args_minimal() -> None:
 
 
 def test_build_args_with_model() -> None:
-    args = _build_args("kimi", "s", "/tmp", "kimi-for-coding", "okabe")
+    args = _build_args("kimi", "prompt_text", "s", "/tmp", "kimi-for-coding")
     assert "--model" in args
     idx = args.index("--model")
     assert args[idx + 1] == "kimi-for-coding"
 
 
 def test_build_args_empty_model_omitted() -> None:
-    args = _build_args("kimi", "s", "/tmp", "", "default")
+    args = _build_args("kimi", "prompt_text", "s", "/tmp", "")
     assert "--model" not in args
 
 
